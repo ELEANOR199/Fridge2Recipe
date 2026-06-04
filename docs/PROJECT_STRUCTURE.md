@@ -6,8 +6,6 @@
 
 ```text
 .
-├── docker-compose.yml
-├── docker-compose.dev.yml
 ├── .env.example
 ├── README.md
 ├── backend/
@@ -15,10 +13,8 @@
 └── docs/
 ```
 
-- `docker-compose.yml`：默认运行配置，适合本地或远程服务器。只暴露 API 端口，PostgreSQL 和 OpenSearch 只在 Docker 内网中访问。
-- `docker-compose.dev.yml`：本地调试覆盖配置，会额外暴露 PostgreSQL 和 OpenSearch 端口，并开启 FastAPI reload。
-- `.env.example`：环境变量模板，复制为 `.env` 后按需修改数据库密码、端口、管理 token、CORS 来源。
-- `README.md`：启动、导入、测试、远程部署命令。
+- `.env.example`：环境变量模板，复制为 `.env` 后按需修改数据库连接、管理 token、CORS 来源。
+- `README.md`：启动、导入、测试命令。
 - `backend/`：FastAPI 后端代码。
 - `data/`：样例数据和后续种子数据。
 - `docs/`：项目说明文档。
@@ -27,12 +23,10 @@
 
 ```text
 backend/
-├── Dockerfile
 ├── requirements.txt
 └── app/
 ```
 
-- `Dockerfile`：定义后端镜像。基于 `python:3.12-slim`，安装 `requirements.txt` 中的依赖。
 - `requirements.txt`：后端依赖，包括 FastAPI、SQLAlchemy、psycopg、OpenSearch client。
 - `app/`：后端应用主体。
 
@@ -58,6 +52,7 @@ FastAPI 入口文件。
 - `GET /health`：健康检查。
 - `POST /api/v1/admin/init-db`：手动建表。
 - `POST /api/v1/admin/import`：导入 xiachufang JSONL 数据。
+- `POST /api/v1/admin/reset-data`：清空已导入数据，便于切换数据集后重新导入。
 - `POST /api/v1/admin/reindex`：重建 OpenSearch 索引。
 - `POST /api/v1/ingredients/parse`：食材解析与归一。
 - `POST /api/v1/search/by-ingredients`：按已有食材搜索菜谱。
@@ -201,11 +196,13 @@ OpenSearch 索引构建服务。
 ```text
 data/
 └── xiachufang/
-    └── recipes.jsonl
+    ├── recipes.jsonl
+    └── recipes_subset.jsonl
 ```
 
-- `data/xiachufang/recipes.jsonl`：当前样例数据。一行一条 JSON。
-- 后续完整数据可以直接追加或替换该文件。
+- `data/xiachufang/recipes_subset.jsonl`：当前默认真实子集数据，一行一条 JSON。
+- `data/xiachufang/recipes.jsonl`：小规模测试数据，便于快速验证导入和搜索流程。
+- 后续完整数据可以追加到 `recipes_subset.jsonl`，或通过 `.env` 中的 `SAMPLE_DATA_PATH` 指向新的 JSONL 文件。
 
 ## 当前请求链路
 

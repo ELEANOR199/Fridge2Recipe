@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     opensearch_url: str = "http://localhost:9200"
     admin_token: str = "dev-token"
     cors_allowed_origins: str = ""
-    sample_data_path: str = "../data/xiachufang/recipes.jsonl"
+    sample_data_path: str = "data/xiachufang/recipes_subset.jsonl"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

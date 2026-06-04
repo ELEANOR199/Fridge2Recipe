@@ -34,6 +34,31 @@ DEFAULT_ALIAS_MAP: dict[str, str] = {
 EXCLUDE_INTENT_WORDS = ("不吃", "不要", "排除", "过敏", "不想吃", "别放", "去掉")
 LOOSE_UNIT_WORDS = ("适量", "少许", "若干")
 
+# MVP 阶段默认认为这些是“基础调味品/基础辅料”。
+# 它们仍会保留在菜谱详情中，但不计入搜索 missing，也不会影响 bucket。
+BASIC_SEASONINGS = {
+    "盐",
+    "白糖",
+    "糖",
+    "食用油",
+    "油",
+    "橄榄油",
+    "香油",
+    "生抽",
+    "老抽",
+    "酱油",
+    "蚝油",
+    "陈醋",
+    "米醋",
+    "香醋",
+    "红酒醋",
+    "胡椒",
+    "黑胡椒",
+    "白胡椒",
+    "淀粉",
+    "料酒",
+}
+
 # 这些词描述包装、形态或状态，而不是食材本身。
 # 去掉它们可以把较嘈杂的 xiachufang 食材名映射到规范名。
 DESCRIPTOR_WORDS = (
@@ -182,3 +207,8 @@ def normalize_ingredient(raw: str, alias_map: dict[str, str] | None = None) -> N
         unit=unit,
         confidence=confidence,
     )
+
+
+def is_basic_seasoning(canonical_name: str | None) -> bool:
+    """判断规范食材名是否属于默认不计缺失的基础调味品。"""
+    return bool(canonical_name and canonical_name in BASIC_SEASONINGS)

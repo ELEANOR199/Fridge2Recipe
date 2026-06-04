@@ -2,179 +2,173 @@
 
 这是一个基于 `xiachufang` 处理后 JSONL 数据的反向食材搜索引擎基础框架。
 
-当前版本包含：
+当前版本采用非 Docker 运行方式：
 
-- Docker Compose：PostgreSQL、OpenSearch、FastAPI
-- PostgreSQL 核心表：菜谱、食材、别名、步骤、原始记录、搜索事件
-- `xiachufang` JSONL 样例数据导入
-- 食材解析、数量单位提取、alias 归一
-- PostgreSQL 兜底搜索、matched / missing / bucket / reason 解释
-- OpenSearch reindex 框架
+- FastAPI 后端直接运行在 Python 虚拟环境中
+- PostgreSQL 作为主数据库，需要在本机或服务器系统中安装
+- OpenSearch 仅用于可选的索引重建接口，当前搜索主链路可只依赖 PostgreSQL 跑通
+- 支持 `xiachufang` JSONL 真实子集数据导入
+- 支持食材解析、数量单位提取、alias 归一
+- 支持 PostgreSQL 兜底搜索、matched / missing / bucket / reason 解释
 
 项目目录和关键代码说明见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
 远程服务器运行后端的完整步骤见 [docs/SERVER_RUNBOOK.md](docs/SERVER_RUNBOOK.md)。
+前端接口和后端运行结果示例见 [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md)。
 
-当前样例数据位于 `data/xiachufang/recipes.jsonl`，已包含 12 条用于搜索测试的菜谱。
+当前默认数据位于 `data/xiachufang/recipes_subset.jsonl`，包含 2500 条真实子集菜谱。`data/xiachufang/recipes.jsonl` 保留为 12 条小规模测试数据。
 
 ## 需要安装的工具
 
-本地 Docker 运行需要：
+Windows 本机推荐使用 WSL 运行后端。本地或服务器都需要：
 
-- Docker Desktop
-- Docker Compose v2
-- Git，可选
+- WSL2 + Ubuntu，Windows 本机推荐
+- Anaconda 或 Miniconda
+- PostgreSQL 16，PostgreSQL 14+ 通常也可运行当前 MVP
+- Git
 
-远程服务器 Docker 运行时，本地电脑不需要安装 Docker Desktop，只需要：
+可选：
 
-- SSH 客户端
-- Git 或 scp，用于把项目传到服务器
+- OpenSearch 2.x，仅在调用 `/api/v1/admin/reindex` 时需要
 
-远程服务器需要：
+Conda 环境文件见 [environment.yml](environment.yml)。
+如果不用 Conda，也可以参考 [backend/requirements.txt](backend/requirements.txt) 通过 pip 安装。
 
-- Linux 服务器，建议 2 核 4GB 以上
-- Docker Engine
-- Docker Compose v2
+## Windows + WSL 本地非 Docker 启动
 
-如果不通过 Docker 直接运行后端，还需要 Python 3.12、PostgreSQL 16、OpenSearch 2.x。当前推荐优先用 Docker。
+在 Windows PowerShell 中确认 WSL 可用：
 
-## 本地 Docker 启动
+```powershell
+wsl --status
+```
+
+如果尚未安装 WSL，可在管理员 PowerShell 中安装 Ubuntu：
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+进入 WSL Ubuntu 后，安装系统依赖：
+
+```bash
+sudo apt update
+sudo apt install -y git curl postgresql postgresql-contrib
+```
+
+确认 WSL 内 Conda 是否可用：
+
+```bash
+conda --version
+```
+
+如果 WSL 中提示 `conda: command not found`，说明 Windows 里的 Anaconda 没有进入 WSL 环境。WSL 是独立的 Linux 系统，需要在 WSL 内单独安装 Anaconda 或 Miniconda。推荐安装轻量的 Miniconda：
+
+```bash
+cd /tmp
+curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+source ~/.bashrc
+conda --version
+```
+
+安装过程中建议接受默认安装路径，并在提示是否初始化 shell 时选择 `yes`。
+
+进入项目目录。你可以直接使用 Windows 目录：
+
+```bash
+cd /mnt/d/Fridge2Recipe
+```
+
+如果追求更好的 WSL 文件性能，也可以把项目放到 WSL home 目录，例如 `~/Fridge2Recipe`。
+
+启动 PostgreSQL：
+
+```bash
+sudo service postgresql start
+```
+
+创建数据库：
+
+```bash
+sudo -u postgres psql
+```
+
+在 PostgreSQL 命令行中执行：
+
+```sql
+CREATE USER fridge WITH PASSWORD 'fridge_dev_password';
+CREATE DATABASE fridge2recipe OWNER fridge;
+\q
+```
+
+创建 Conda 环境：
+
+```bash
+conda env create -f environment.yml
+conda activate fridge2recipe
+```
+
+如果访问 `repo.anaconda.com` 超时，可以先切换 Conda 镜像：
+
+```bash
+conda config --set show_channel_urls yes
+conda config --remove-key channels 2>/dev/null || true
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda clean -i
+conda env create -f environment.yml
+conda activate fridge2recipe
+```
 
 复制环境变量文件：
-
-```powershell
-Copy-Item .env.example .env
-```
-
-默认启动只暴露 API 端口：
-
-```powershell
-docker compose up -d --build
-```
-
-检查服务：
-
-```powershell
-docker compose ps
-curl http://localhost:8000/health
-```
-
-如果你还想在本地直接访问 PostgreSQL `5432` 和 OpenSearch `9200`，使用 dev override：
-
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-```
-
-## 远程服务器 Docker 运行
-
-可以。推荐方式是：后端、PostgreSQL、OpenSearch 都跑在远程服务器 Docker 中，本地只通过浏览器、curl 或前端页面访问远程 API。
-
-### 1. 登录服务器
-
-```bash
-ssh user@your-server-ip
-```
-
-### 2. 安装 Docker
-
-如果服务器还没有 Docker，请先安装 Docker Engine 和 Compose v2。安装完成后确认：
-
-```bash
-docker --version
-docker compose version
-```
-
-### 3. 上传或拉取项目
-
-方式一：服务器上 git clone：
-
-```bash
-git clone <your-repo-url> Fridge2Recipe
-cd Fridge2Recipe
-```
-
-方式二：本地通过 scp 上传当前项目目录：
-
-```powershell
-scp -r D:\Fridge2Recipe user@your-server-ip:~/Fridge2Recipe
-```
-
-然后在服务器上：
-
-```bash
-cd ~/Fridge2Recipe
-```
-
-### 4. 配置远程环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`：
+确认 `.env` 中的数据库连接和 WSL 里的 PostgreSQL 一致：
 
 ```env
-POSTGRES_DB=fridge2recipe
-POSTGRES_USER=fridge
-POSTGRES_PASSWORD=请改成强密码
-API_PORT=8000
-ADMIN_TOKEN=请改成强随机字符串
-CORS_ALLOWED_ORIGINS=http://your-server-ip:3000,https://your-frontend-domain.com
+DATABASE_URL=postgresql+psycopg://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe
 ```
 
-如果当前只用 curl 测试 API，`CORS_ALLOWED_ORIGINS` 可以留空。
-
-### 5. 启动远程服务
+启动后端：
 
 ```bash
-docker compose up -d --build
+export PYTHONPATH=$PWD/backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-默认只向服务器宿主机暴露 API 端口 `8000`。PostgreSQL 和 OpenSearch 不暴露到公网，只允许 API 容器通过 Docker 内网访问。
+在 WSL 或 Windows PowerShell 中检查服务：
 
-### 6. 开放服务器防火墙
-
-只需要开放 API 端口，例如 `8000`。不要开放 `5432` 和 `9200` 到公网。
-
-云服务器还需要在安全组中放行 TCP `8000`。
-
-### 7. 远程健康检查
-
-在服务器上：
-
-```bash
+```powershell
 curl http://localhost:8000/health
 ```
 
-在你的本地电脑上：
-
-```powershell
-curl http://your-server-ip:8000/health
-```
-
-## 导入样例数据
+## 导入真实子集数据
 
 服务启动后，后端会自动创建数据表。执行导入：
 
 ```powershell
+curl -X POST http://localhost:8000/api/v1/admin/reset-data `
+  -H "X-Admin-Token: dev-token"
+
 curl -X POST http://localhost:8000/api/v1/admin/import `
   -H "Content-Type: application/json" `
   -H "X-Admin-Token: dev-token" `
   -d "{}"
 ```
 
-远程服务器把地址换成：
+真实子集首次导入成功时，响应类似：
 
-```powershell
-curl -X POST http://your-server-ip:8000/api/v1/admin/import `
-  -H "Content-Type: application/json" `
-  -H "X-Admin-Token: 你的ADMIN_TOKEN" `
-  -d "{}"
+```json
+{"rows":2500,"imported":2500,"skipped":0,"source_records":2500,"recipe_ingredients":20135,"recipe_steps":17784,"skipped_ingredients":1}
 ```
 
-样例数据位置：
+默认数据位置：
 
 ```text
-data/xiachufang/recipes.jsonl
+data/xiachufang/recipes_subset.jsonl
 ```
 
 ## 测试食材解析
@@ -190,7 +184,7 @@ curl -X POST http://localhost:8000/api/v1/ingredients/parse `
 ```powershell
 curl -X POST http://localhost:8000/api/v1/search/by-ingredients `
   -H "Content-Type: application/json" `
-  -d "{\"items\":[\"金枪鱼\",\"生菜\",\"黄瓜\"],\"excluded_items\":[],\"filters\":{},\"page\":1,\"page_size\":10}"
+  -d "{\"items\":[\"西红柿\",\"鸡蛋\"],\"excluded_items\":[],\"filters\":{},\"page\":1,\"page_size\":5}"
 ```
 
 ## 查看详情
@@ -201,38 +195,18 @@ curl -X POST http://localhost:8000/api/v1/search/by-ingredients `
 curl http://localhost:8000/api/v1/recipes/1
 ```
 
-## 重建 OpenSearch 索引
+## 可选：重建 OpenSearch 索引
 
-当前搜索接口先使用 PostgreSQL 兜底匹配。OpenSearch 索引可通过下面命令重建，后续可将召回切换到 `recipes_current` alias。
+当前搜索接口先使用 PostgreSQL 兜底匹配。安装并启动 OpenSearch 后，可以通过下面命令重建索引：
 
 ```powershell
 curl -X POST http://localhost:8000/api/v1/admin/reindex `
   -H "X-Admin-Token: dev-token"
 ```
 
-## 常用维护命令
-
-查看日志：
-
-```powershell
-docker compose logs -f api
-```
-
-停止服务：
-
-```powershell
-docker compose down
-```
-
-停止并清空数据库和索引卷：
-
-```powershell
-docker compose down -v
-```
-
 ## 后续实现重点
 
-1. 扩充 `data/xiachufang/recipes.jsonl` 到完整数据。
+1. 将 `data/xiachufang/recipes_subset.jsonl` 扩充到完整数据。
 2. 根据真实数据补充 `DEFAULT_ALIAS_MAP` 或改为 CSV 种子导入。
 3. 将 `/api/v1/search/by-ingredients` 的召回从 PostgreSQL 切到 OpenSearch。
 4. 增加黄金查询集和 Recall@20 评测脚本。

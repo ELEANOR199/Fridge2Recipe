@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
@@ -10,6 +10,7 @@ from app.schemas.api import ImportRequest, ParseRequest, RecipeDetail, SearchReq
 from app.services.opensearch_indexer import reindex_recipes
 from app.services.parser import parse_ingredients
 from app.services.search import search_by_ingredients
+from app.services.normalizer import is_basic_seasoning
 from app.workers.import_xiachufang import import_xiachufang_jsonl
 
 router = APIRouter()
@@ -48,6 +49,28 @@ def import_sample(payload: ImportRequest, db: Session = Depends(get_db)) -> dict
     settings = get_settings()
     path = payload.path or settings.sample_data_path
     return import_xiachufang_jsonl(db, path)
+
+
+@router.post("/api/v1/admin/reset-data", dependencies=[Depends(require_admin)])
+def reset_data(db: Session = Depends(get_db)) -> dict:
+    """清空已导入的菜谱和食材数据，便于从测试数据切换到真实数据。"""
+    cleared_tables = [
+        "search_events",
+        "recipe_steps",
+        "recipe_ingredients",
+        "recipes",
+        "source_records",
+        "ingredient_aliases",
+        "ingredients",
+    ]
+    db.execute(
+        text(
+            "TRUNCATE TABLE search_events, recipe_steps, recipe_ingredients, recipes, "
+            "source_records, ingredient_aliases, ingredients RESTART IDENTITY CASCADE"
+        )
+    )
+    db.commit()
+    return {"status": "ok", "cleared": cleared_tables}
 
 
 @router.post("/api/v1/admin/reindex", dependencies=[Depends(require_admin)])
@@ -99,6 +122,7 @@ def recipe_detail(recipe_id: int, db: Session = Depends(get_db)) -> RecipeDetail
                 "canonical_name": item.canonical_name,
                 "quantity": float(item.quantity) if item.quantity is not None else None,
                 "unit": item.unit,
+                "required": item.required and not is_basic_seasoning(item.canonical_name),
                 "position": item.position,
             }
             for item in recipe.ingredients

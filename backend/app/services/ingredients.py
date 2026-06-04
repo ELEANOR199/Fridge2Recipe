@@ -1,8 +1,11 @@
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models.tables import Ingredient, IngredientAlias
 from app.services.normalizer import DEFAULT_ALIAS_MAP, NormalizedIngredient, normalize_ingredient
+
+MAX_INGREDIENT_NAME_LENGTH = 80
 
 
 def load_alias_map(db: Session) -> dict[str, str]:
@@ -24,22 +27,34 @@ def ensure_ingredient(db: Session, canonical_name: str, aliases: list[str] | Non
     alias_values = set(aliases or [])
     alias_values.add(canonical_name)
     for alias in alias_values:
-        if not alias:
+        if not alias or len(alias) > MAX_INGREDIENT_NAME_LENGTH:
             continue
-        existing_alias = db.scalar(select(IngredientAlias).where(IngredientAlias.alias == alias))
-        if existing_alias is None:
-            db.add(IngredientAlias(ingredient_id=ingredient.id, alias=alias, source="auto", confidence=1.0))
+        # 真实数据量变大后，同一个事务里可能多次遇到相同 alias。
+        # 直接使用 PostgreSQL 的冲突忽略，避免唯一约束错误中断整批导入。
+        db.execute(
+            insert(IngredientAlias)
+            .values(ingredient_id=ingredient.id, alias=alias, source="auto", confidence=1.0)
+            .on_conflict_do_nothing(index_elements=["alias"])
+        )
 
     return ingredient
 
 
 def seed_default_aliases(db: Session) -> int:
     created = 0
+    aliases_by_canonical: dict[str, list[str]] = {}
     for alias, canonical in DEFAULT_ALIAS_MAP.items():
-        before = db.scalar(select(IngredientAlias).where(IngredientAlias.alias == alias))
-        ensure_ingredient(db, canonical, aliases=[alias])
-        if before is None:
-            created += 1
+        aliases_by_canonical.setdefault(canonical, []).append(alias)
+
+    for canonical, aliases in aliases_by_canonical.items():
+        existing_aliases = {
+            row[0]
+            for row in db.execute(
+                select(IngredientAlias.alias).where(IngredientAlias.alias.in_(set(aliases) | {canonical}))
+            ).all()
+        }
+        ensure_ingredient(db, canonical, aliases=aliases)
+        created += len((set(aliases) | {canonical}) - existing_aliases)
     return created
 
 

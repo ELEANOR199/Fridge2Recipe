@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.tables import Recipe, SearchEvent
 from app.schemas.api import ParseResponse, SearchFilters, SearchItem, SearchRequest, SearchResponse
 from app.services.parser import parse_ingredients
+from app.services.normalizer import is_basic_seasoning
 
 
 def bucket_for_missing(missing_count: int) -> str:
@@ -97,7 +98,11 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
 
     scored: list[SearchItem] = []
     for recipe in load_candidates(db, request.filters):
-        recipe_names = [item.canonical_name for item in recipe.ingredients if item.required and item.canonical_name]
+        recipe_names = [
+            item.canonical_name
+            for item in recipe.ingredients
+            if item.required and item.canonical_name and not is_basic_seasoning(item.canonical_name)
+        ]
         recipe_name_set = set(recipe_names)
 
         # 硬过滤：如果菜谱包含用户排除的食材，就完全不展示。

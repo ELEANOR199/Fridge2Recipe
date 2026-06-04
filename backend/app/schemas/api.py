@@ -62,6 +62,7 @@ class RecipeIngredientOut(BaseModel):
     canonical_name: str | None
     quantity: float | None = None
     unit: str | None = None
+    required: bool
     position: int
 
 

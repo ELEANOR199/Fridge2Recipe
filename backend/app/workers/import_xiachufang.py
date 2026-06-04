@@ -3,12 +3,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.tables import Recipe, RecipeIngredient, RecipeStep, SourceRecord
-from app.services.ingredients import ensure_ingredient, load_alias_map, seed_default_aliases
-from app.services.normalizer import normalize_ingredient
+from app.services.ingredients import MAX_INGREDIENT_NAME_LENGTH, ensure_ingredient, load_alias_map, seed_default_aliases
+from app.services.normalizer import BASIC_SEASONINGS, is_basic_seasoning, normalize_ingredient
 
 
 def stable_hash(payload: Any) -> str:
@@ -17,14 +17,36 @@ def stable_hash(payload: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def remove_postgres_null_chars(value: Any) -> Any:
+    """移除 PostgreSQL 文本和 JSONB 不能存储的空字符。"""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [remove_postgres_null_chars(item) for item in value]
+    if isinstance(value, dict):
+        return {key: remove_postgres_null_chars(item) for key, item in value.items()}
+    return value
+
+
+def trim_text(value: Any, max_length: int) -> str | None:
+    """把来源文本裁剪到数据库字段长度内。"""
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= max_length:
+        return text
+    return text[:max_length]
+
+
 def calc_quality_score(row: dict[str, Any], normalized_count: int) -> float:
     """根据 xiachufang 当前可用字段估算菜谱质量分。
 
     源数据样例暂时没有热度、烹饪时间和难度，所以 MVP 质量分先奖励可用结构：
     有足够步骤、食材数量合理、有可选描述，以及食材能成功归一。
     """
-    n_steps = int(row.get("n_steps") or len(row.get("steps") or []))
-    n_ingredients = int(row.get("n_ingredients") or len(row.get("ingredients") or []))
+    # 真实子集里少量 n_ingredients 字段和数组长度不一致，导入时以实际数组为准。
+    n_steps = len(row.get("steps") or [])
+    n_ingredients = len(row.get("ingredients") or [])
     score = 0.0
     if n_steps > 0:
         score += 0.4
@@ -70,8 +92,10 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
     source_records = 0
     ingredient_links = 0
     step_links = 0
+    skipped_ingredients = 0
 
-    for row in rows:
+    for raw_row in rows:
+        row = remove_postgres_null_chars(raw_row)
         source_id = row["id"]
         recipe_exists = db.scalar(
             select(Recipe).where(Recipe.source_name == "xiachufang", Recipe.source_recipe_id == source_id)
@@ -104,6 +128,9 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
         for item in raw_ingredients:
             raw_name = item.get("name") or item.get("raw") or ""
             normalized = normalize_ingredient(raw_name, alias_map)
+            if not normalized.canonical or len(normalized.canonical) > MAX_INGREDIENT_NAME_LENGTH:
+                skipped_ingredients += 1
+                continue
 
             # ensure_ingredient 会同时创建规范食材和别名记录，
             # 让早期导入流程可以顺手初始化一张可用的食材表。
@@ -113,8 +140,8 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
         recipe = Recipe(
             source_name="xiachufang",
             source_recipe_id=source_id,
-            title=row["name"],
-            dish=row.get("dish"),
+            title=trim_text(row["name"], 200) or "",
+            dish=trim_text(row.get("dish"), 120),
             description=row.get("description") or "",
             quality_score=calc_quality_score(row, len(normalized_items)),
             rights_status="clear",
@@ -129,11 +156,11 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
                 RecipeIngredient(
                     recipe_id=recipe.id,
                     ingredient_id=ingredient.id,
-                    raw_text=item.get("raw") or item.get("name") or "",
+                    raw_text=trim_text(item.get("raw") or item.get("name") or "", 200) or "",
                     canonical_name=normalized.canonical,
                     quantity=normalized.quantity,
-                    unit=normalized.unit,
-                    required=True,
+                    unit=trim_text(normalized.unit, 30),
+                    required=not is_basic_seasoning(normalized.canonical),
                     position=position,
                 )
             )
@@ -145,6 +172,11 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
 
         imported += 1
 
+    db.execute(
+        update(RecipeIngredient)
+        .where(RecipeIngredient.canonical_name.in_(BASIC_SEASONINGS))
+        .values(required=False)
+    )
     db.commit()
     return {
         "rows": len(rows),
@@ -153,4 +185,5 @@ def import_xiachufang_jsonl(db: Session, path: str | Path) -> dict[str, int]:
         "source_records": source_records,
         "recipe_ingredients": ingredient_links,
         "recipe_steps": step_links,
+        "skipped_ingredients": skipped_ingredients,
     }
