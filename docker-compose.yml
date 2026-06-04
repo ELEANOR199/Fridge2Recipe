@@ -1,0 +1,61 @@
+#只暴露 API 8000，PostgreSQL 5432 和 OpenSearch 9200 不再默认暴露到宿主机，更适合远程服务器部署
+services:
+  postgres:
+    image: postgres:16
+    container_name: fridge2recipe-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fridge2recipe}
+      POSTGRES_USER: ${POSTGRES_USER:-fridge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fridge_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fridge} -d ${POSTGRES_DB:-fridge2recipe}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: fridge2recipe-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "Fridge2Recipe_Dev_123!"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    container_name: fridge2recipe-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-fridge}:${POSTGRES_PASSWORD:-fridge_dev_password}@postgres:5432/${POSTGRES_DB:-fridge2recipe}
+      OPENSEARCH_URL: http://opensearch:9200
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-token}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      SAMPLE_DATA_PATH: /data/xiachufang/recipes.jsonl
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  postgres_data:
+  opensearch_data:

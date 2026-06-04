@@ -1,0 +1,13 @@
+#本地调试需要访问数据库和 OpenSearch
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  opensearch:
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "9600:9600"
+
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
