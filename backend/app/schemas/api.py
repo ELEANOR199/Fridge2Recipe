@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -23,6 +25,14 @@ class SearchFilters(BaseModel):
     max_minutes: int | None = None
     difficulty_lte: int | None = None
     cuisine: list[str] | None = None
+    spice: Literal["spicy", "not_spicy"] | None = None
+    complexity: Literal["simple", "complex"] | None = None
+    count_seasonings_as_ingredients: bool = False
+    diet: Literal["meat", "vegetarian"] | None = None
+    for_children: bool | None = None
+    serving_size: Literal["large", "small"] | None = None
+    seasoning_amount: Literal["many", "few"] | None = None
+    methods: list[Literal["炒", "蒸", "煎", "拌", "炖"]] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):
@@ -44,6 +54,10 @@ class SearchItem(BaseModel):
     bucket: str
     score: float
     reason: str
+    recipe_tags: list[str] = Field(default_factory=list)
+    preference_matches: list[str] = Field(default_factory=list)
+    preference_mismatches: list[str] = Field(default_factory=list)
+    preference_score: float = 0.0
 
 
 class SearchResponse(BaseModel):
@@ -78,5 +92,6 @@ class RecipeDetail(BaseModel):
     dish: str | None = None
     description: str | None = None
     quality_score: float
+    recipe_tags: list[str] = Field(default_factory=list)
     ingredients: list[RecipeIngredientOut]
     steps: list[RecipeStepOut]

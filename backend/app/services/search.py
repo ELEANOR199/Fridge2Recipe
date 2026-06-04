@@ -8,6 +8,7 @@ from app.models.tables import Recipe, SearchEvent
 from app.schemas.api import ParseResponse, SearchFilters, SearchItem, SearchRequest, SearchResponse
 from app.services.parser import parse_ingredients
 from app.services.normalizer import is_basic_seasoning
+from app.services.preferences import extract_recipe_features, recipe_tags, score_preferences
 
 
 def bucket_for_missing(missing_count: int) -> str:
@@ -21,13 +22,20 @@ def bucket_for_missing(missing_count: int) -> str:
     return "灵感参考"
 
 
-def reason_text(matched: list[str], missing: list[str], recipe: Recipe) -> str:
+def reason_text(
+    matched: list[str],
+    missing: list[str],
+    recipe: Recipe,
+    preference_matches: list[str],
+) -> str:
     """根据透明排序特征生成推荐原因文案。"""
     parts = [f"命中 {len(matched)} 个已有食材"]
     if missing:
         parts.append(f"缺少 {len(missing)} 个食材")
     else:
         parts.append("必需食材已覆盖")
+    if preference_matches:
+        parts.append(f"偏好匹配：{'、'.join(preference_matches[:4])}")
     parts.append(f"质量分 {float(recipe.quality_score):.2f}")
     return "，".join(parts)
 
@@ -98,15 +106,23 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
 
     scored: list[SearchItem] = []
     for recipe in load_candidates(db, request.filters):
+        include_seasonings = request.filters.count_seasonings_as_ingredients
         recipe_names = [
             item.canonical_name
             for item in recipe.ingredients
-            if item.required and item.canonical_name and not is_basic_seasoning(item.canonical_name)
+            if item.canonical_name
+            and (item.required or include_seasonings)
+            and (include_seasonings or not is_basic_seasoning(item.canonical_name))
         ]
         recipe_name_set = set(recipe_names)
+        all_recipe_name_set = {
+            item.canonical_name
+            for item in recipe.ingredients
+            if item.canonical_name
+        }
 
         # 硬过滤：如果菜谱包含用户排除的食材，就完全不展示。
-        if excluded_names & recipe_name_set:
+        if excluded_names & all_recipe_name_set:
             continue
 
         matched = sorted(user_names & recipe_name_set)
@@ -120,13 +136,16 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
         # 简化版 MVP 排序分。当前 xiachufang 样例数据缺少总时长、
         # 难度和热度，所以先用覆盖率、质量分和弱文本分组合。
         # 后续可以用黄金查询集继续调权重。
-        score = (
+        ingredient_score = (
             0.45 * coverage_recipe
             + 0.25 * coverage_user
             + 0.20 * float(recipe.quality_score)
             + 0.10 * lexical_score(recipe, user_names)
             - 0.20 * missing_penalty
         )
+        features = extract_recipe_features(recipe)
+        preference_score, preference_matches, preference_mismatches = score_preferences(features, request.filters)
+        score = ingredient_score + preference_score
 
         # 零食材重合的菜谱保留为灵感参考，但给少量惩罚，
         # 让真正命中的结果排在前面。
@@ -144,7 +163,11 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
                 missing=unique_missing,
                 bucket=bucket_for_missing(len(set(missing))),
                 score=round(score, 3),
-                reason=reason_text(matched, unique_missing, recipe),
+                reason=reason_text(matched, unique_missing, recipe, preference_matches),
+                recipe_tags=recipe_tags(features),
+                preference_matches=preference_matches,
+                preference_mismatches=preference_mismatches,
+                preference_score=preference_score,
             )
         )
 

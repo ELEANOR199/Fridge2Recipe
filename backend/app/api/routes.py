@@ -11,6 +11,7 @@ from app.services.opensearch_indexer import reindex_recipes
 from app.services.parser import parse_ingredients
 from app.services.search import search_by_ingredients
 from app.services.normalizer import is_basic_seasoning
+from app.services.preferences import extract_recipe_features, recipe_tags
 from app.workers.import_xiachufang import import_xiachufang_jsonl
 
 router = APIRouter()
@@ -116,6 +117,7 @@ def recipe_detail(recipe_id: int, db: Session = Depends(get_db)) -> RecipeDetail
         dish=recipe.dish,
         description=recipe.description,
         quality_score=float(recipe.quality_score),
+        recipe_tags=recipe_tags(extract_recipe_features(recipe)),
         ingredients=[
             {
                 "raw_text": item.raw_text,

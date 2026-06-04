@@ -1,34 +1,51 @@
-# 后端运行结果与前端接口示例
+# Fridge2Recipe 前端接口文档
 
-本文档给前端开发使用，假设后端运行在：
+本文档面向前端开发。当前后端支持“已有食材 / 不需要食材 / 偏好标签”进行菜谱筛选。食材命中权重最高，其次是荤素和辣不辣，其余偏好用于小幅调整排序。默认情况下基础调味品不会计入缺失食材，例如 `盐`、`糖`、`食用油`、`生抽`、`醋`、`胡椒`、`淀粉` 等。
 
-```text
-http://localhost:8000
-```
+## 1. 后端地址
 
-如果后端部署在远程服务器，把 `localhost` 替换为服务器 IP 或域名即可。
-
-## 1. 后端运行成功表现
-
-启动命令：
-
-```bash
-conda activate fridge2recipe
-export PYTHONPATH=$PWD/backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-终端中看到类似输出，说明 FastAPI 已启动：
+本机后端地址固定使用：
 
 ```text
-INFO:     Uvicorn running on http://0.0.0.0:8000
-INFO:     Application startup complete.
+http://127.0.0.1:8000
 ```
+
+前端建议配置：
+
+```ts
+export const API_BASE_URL = "http://127.0.0.1:8000";
+```
+
+如果前端运行在另一台机器上，不能使用 `127.0.0.1`，需要改为后端所在机器的局域网 IP 或服务器 IP：
+
+```ts
+export const API_BASE_URL = "http://<后端机器IP>:8000";
+```
+
+例如：
+
+```ts
+export const API_BASE_URL = "http://192.168.1.23:8000";
+```
+
+如果前端运行在 Vite 默认端口 `5173`，并且浏览器出现 CORS 报错，请在后端 `.env` 中设置：
+
+```env
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+如果前端在另一台机器上，例如 `http://192.168.1.50:5173`，则改为：
+
+```env
+CORS_ALLOWED_ORIGINS=http://192.168.1.50:5173
+```
+
+修改后重启后端。
 
 健康检查：
 
-```bash
-curl http://localhost:8000/health
+```http
+GET /health
 ```
 
 响应：
@@ -39,245 +56,104 @@ curl http://localhost:8000/health
 }
 ```
 
-浏览器也可以打开：
+## 2. 前后端交互流程
+
+前端第一版建议只有一个搜索页和一个详情弹窗 / 抽屉。
 
 ```text
-http://localhost:8000/docs
+用户输入食材
+  -> 点击“搜索”或按 Enter
+  -> POST /api/v1/search/by-ingredients
+  -> 渲染搜索结果列表
+  -> 点击某个菜谱卡片
+  -> GET /api/v1/recipes/{recipe_id}
+  -> 渲染菜谱详情
 ```
 
-这是 FastAPI 自动生成的接口调试页。
-
-## 2. 管理接口
-
-管理接口需要请求头：
+可选流程：
 
 ```text
-X-Admin-Token: dev-token
+用户输入食材
+  -> 点击“解析”或输入完成后自动解析
+  -> POST /api/v1/ingredients/parse
+  -> 展示后端归一后的食材 tag
 ```
 
-如果 `.env` 中修改了 `ADMIN_TOKEN`，这里也要同步替换。
+搜索接口本身也会解析食材，因此前端可以不单独调用解析接口，直接调用搜索接口。
 
-### 2.1 初始化数据库
+## 3. 输入标签与后端字段对应
 
-后端启动时会自动建表，一般不需要手动调用。需要手动初始化时：
+| 前端区域 | 前端含义 | 后端字段 | 类型 | 示例 |
+|---|---|---|---|---|
+| 已有食材输入框 / tag | 用户拥有、希望用于匹配的食材 | `items` | `string[]` | `["西红柿", "鸡蛋"]` |
+| 不需要食材输入框 / tag | 用户不想看到的食材，含有这些食材的菜谱会被排除 | `excluded_items` | `string[]` | `["香菜"]` |
 
-```http
-POST /api/v1/admin/init-db
-```
+偏好标签统一放在 `filters` 中：
 
-请求示例：
+| 前端标签 | 后端字段 | 可选值 | 说明 |
+|---|---|---|---|
+| 辣 / 不辣 | `filters.spice` | `"spicy"` / `"not_spicy"` | 影响排序，辣不辣权重较高 |
+| 简单 / 复杂 | `filters.complexity` | `"simple"` / `"complex"` | 简单表示步骤数 `<= 5`，复杂表示步骤数 `> 5` |
+| 调味料是否算食材 | `filters.count_seasonings_as_ingredients` | `true` / `false` | `false` 时基础调味品不计入 `missing`，默认 `false` |
+| 荤菜 / 素菜 | `filters.diet` | `"meat"` / `"vegetarian"` | 影响排序，荤素权重较高 |
+| 是否给小孩 | `filters.for_children` | `true` / `false` | `true` 时偏好不辣、步骤不太多、少酒类词的菜谱 |
+| 分量多 / 少 | `filters.serving_size` | `"large"` / `"small"` | 根据标题、描述和食材数量粗略推断 |
+| 调料多 / 少 | `filters.seasoning_amount` | `"many"` / `"few"` | 根据基础调味品数量和占比推断 |
+| 烹饪手法 | `filters.methods` | `["炒","蒸","煎","拌","炖"]` | 可多选 |
 
-```bash
-curl -X POST http://localhost:8000/api/v1/admin/init-db \
-  -H "X-Admin-Token: dev-token"
-```
+后端还保留以下兼容字段，当前数据中大多为空，前端第一版可以不做：
 
-响应示例：
-
-```json
-{
-  "status": "ok"
-}
-```
-
-### 2.2 导入菜谱数据
-
-如果之前已经导入过 12 条测试数据，建议先清空旧导入数据：
-
-```http
-POST /api/v1/admin/reset-data
-```
-
-请求示例：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/admin/reset-data \
-  -H "X-Admin-Token: dev-token"
-```
-
-响应示例：
-
-```json
-{
-  "status": "ok",
-  "cleared": [
-    "search_events",
-    "recipe_steps",
-    "recipe_ingredients",
-    "recipes",
-    "source_records",
-    "ingredient_aliases",
-    "ingredients"
-  ]
-}
-```
-
-```http
-POST /api/v1/admin/import
-```
-
-请求体：
-
-```json
-{}
-```
-
-默认导入 `.env` 中的：
-
-```text
-SAMPLE_DATA_PATH=data/xiachufang/recipes_subset.jsonl
-```
-
-请求示例：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/admin/import \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Token: dev-token" \
-  -d "{}"
-```
-
-响应示例：
-
-```json
-{
-  "rows": 2500,
-  "imported": 2500,
-  "skipped": 0,
-  "source_records": 2500,
-  "recipe_ingredients": 20135,
-  "recipe_steps": 17784,
-  "skipped_ingredients": 1
-}
-```
-
-字段说明：
-
-| 字段 | 含义 |
-|---|---|
-| `rows` | JSONL 文件中读取到的菜谱总数 |
-| `imported` | 本次新导入菜谱数 |
-| `skipped` | 因为 source id 已存在而跳过的菜谱数 |
-| `source_records` | 写入原始记录表的数量 |
-| `recipe_ingredients` | 写入菜谱食材明细的数量 |
-| `recipe_steps` | 写入菜谱步骤的数量 |
-| `skipped_ingredients` | 跳过的异常食材行数量 |
-
-前端通常不需要调用该接口，可作为后台数据准备接口。
-
-## 3. 食材解析接口
-
-### 3.1 解析用户输入
-
-```http
-POST /api/v1/ingredients/parse
-```
-
-请求体：
-
-```json
-{
-  "items": ["西红柿2个 鸡蛋3枚", "不想吃香菜"]
-}
-```
-
-响应示例：
-
-```json
-{
-  "ingredients": [
-    {
-      "raw": "西红柿2个",
-      "canonical": "番茄",
-      "quantity": 2.0,
-      "unit": "个",
-      "confidence": 1.0
-    },
-    {
-      "raw": "鸡蛋3枚",
-      "canonical": "鸡蛋",
-      "quantity": 3.0,
-      "unit": "枚",
-      "confidence": 1.0
-    }
-  ],
-  "excluded_ingredients": [
-    "香菜"
-  ],
-  "need_confirmation": []
-}
-```
-
-字段说明：
-
-| 字段 | 含义 | 前端用途 |
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `ingredients` | 已识别出的可用食材 | 展示为食材 tag |
-| `raw` | 用户原始输入片段 | 可用于 hover 或纠错 |
-| `canonical` | 后端归一后的规范食材名 | 搜索时使用 |
-| `quantity` | 数量，可能为 `null` | 当前可展示，暂不参与排序 |
-| `unit` | 单位，可能为 `null` | 当前可展示，暂不参与排序 |
-| `confidence` | 归一置信度 | 低于 0.9 可提示用户确认 |
-| `excluded_ingredients` | 排除食材 | 展示为“不要这些” |
-| `need_confirmation` | 低置信度候选 | 前端可提示用户确认 |
+| `filters.max_minutes` | `number \| null` | 最大烹饪时间，当前数据基本缺失 |
+| `filters.difficulty_lte` | `number \| null` | 最大难度，当前数据基本缺失 |
+| `filters.cuisine` | `string[] \| null` | 菜系筛选，当前数据基本缺失 |
 
-前端建议：
+分页字段：
 
-- 用户在输入框按回车或点击“解析”时调用。
-- 解析结果可以展示为 tag。
-- 如果 `need_confirmation` 非空，提示“以下食材识别不确定”。
+| 前端区域 | 后端字段 | 类型 | 示例 |
+|---|---|---|---|
+| 页码 | `page` | `number` | `1` |
+| 每页数量 | `page_size` | `number` | `20` |
 
 ## 4. 搜索接口
-
-### 4.1 按已有食材搜索菜谱
 
 ```http
 POST /api/v1/search/by-ingredients
 ```
 
-请求体：
-
-```json
-{
-  "items": ["西红柿", "鸡蛋"],
-  "excluded_items": [],
-  "filters": {},
-  "page": 1,
-  "page_size": 5
-}
-```
-
-完整请求体字段：
+### 4.1 请求格式
 
 ```json
 {
   "items": ["西红柿", "鸡蛋"],
   "excluded_items": ["香菜"],
   "filters": {
-    "max_minutes": null,
-    "difficulty_lte": null,
-    "cuisine": null
+    "spice": "not_spicy",
+    "complexity": "simple",
+    "count_seasonings_as_ingredients": false,
+    "diet": "vegetarian",
+    "for_children": true,
+    "serving_size": "small",
+    "seasoning_amount": "few",
+    "methods": ["炒"]
   },
   "page": 1,
   "page_size": 20
 }
 ```
 
-说明：
+字段说明：
 
-- 当前样例数据暂时没有 `total_minutes`、`difficulty`、`cuisine`，所以筛选字段可以先传 `{}`。
-- `page` 从 1 开始。
-- `page_size` 最大 100。
+| 字段 | 必填 | 类型 | 说明 |
+|---|---|---|---|
+| `items` | 建议传 | `string[]` | 已有食材，可为空数组；省略时默认为 `[]` |
+| `excluded_items` | 建议传 | `string[]` | 不需要食材，可为空数组；省略时默认为 `[]` |
+| `filters` | 建议传 | `object` | 偏好标签对象；没有偏好时传 `{}`，省略时后端也会按 `{}` 处理 |
+| `page` | 建议传 | `number` | 从 1 开始；省略时默认为 `1` |
+| `page_size` | 建议传 | `number` | 1 到 100；省略时默认为 `20` |
 
-请求示例：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/search/by-ingredients \
-  -H "Content-Type: application/json" \
-  -d '{"items":["西红柿","鸡蛋"],"excluded_items":[],"filters":{},"page":1,"page_size":5}'
-```
-
-响应示例：
+### 4.2 响应格式
 
 ```json
 {
@@ -298,135 +174,120 @@ curl -X POST http://localhost:8000/api/v1/search/by-ingredients \
         "confidence": 1.0
       }
     ],
-    "excluded_ingredients": [],
+    "excluded_ingredients": ["香菜"],
     "need_confirmation": []
   },
-  "total": 2500,
+  "total": 2418,
   "items": [
     {
-      "recipe_id": 2,
-      "source_recipe_id": "r0000002",
-      "title": "家常番茄炒蛋",
-      "dish": "番茄炒蛋",
+      "recipe_id": 1,
+      "source_recipe_id": "r0000067",
+      "title": "超美味的西红柿蛋汤",
+      "dish": "西红柿蛋汤",
       "quality_score": 1.0,
       "matched": ["番茄", "鸡蛋"],
-      "missing": ["小葱"],
-      "bucket": "再买 1 样",
-      "score": 0.81,
-      "reason": "命中 2 个已有食材，缺少 1 个食材，质量分 1.00"
-    },
-    {
-      "recipe_id": 11,
-      "source_recipe_id": "r0000011",
-      "title": "紫菜蛋花汤",
-      "dish": "蛋花汤",
-      "quality_score": 1.0,
-      "matched": ["鸡蛋"],
-      "missing": ["紫菜", "虾皮", "小葱", "盐", "香油"],
-      "bucket": "灵感参考",
-      "score": 0.183,
-      "reason": "命中 1 个已有食材，缺少 5 个食材，质量分 1.00"
+      "missing": [],
+      "bucket": "马上能做",
+      "score": 1.24,
+      "reason": "命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00",
+      "recipe_tags": ["不辣", "素菜", "复杂", "调料少", "分量少", "适合小孩", "炒"],
+      "preference_matches": ["素菜", "不辣", "适合小孩", "分量少", "调料少", "炒"],
+      "preference_mismatches": ["简单"],
+      "preference_score": 0.34
     }
   ],
   "facets": {
     "bucket": [
       {
-        "name": "灵感参考",
-        "count": 2500
+        "name": "马上能做",
+        "count": 1
+      },
+      {
+        "name": "还差几样",
+        "count": 358
       }
     ]
   }
 }
 ```
 
-注意：`recipe_id`、`score` 和结果顺序取决于数据库导入顺序、样例数据和排序规则，后续调参后可能变化。前端不要写死这些值，只按响应字段动态渲染。
+注意：示例响应对应上方带 `excluded_items:["香菜"]` 和偏好标签的请求。实际结果会随导入数据、用户输入和偏好选择变化。
+`facets.bucket` 示例只展示了部分分组，前端应按接口实际返回的数组渲染。
 
-基础调味品不会计入 `missing`。例如 `盐`、`白糖`、`食用油`、`生抽`、`老抽`、`醋`、`胡椒`、`淀粉` 等仍会保留在详情食材中，但不会影响搜索分组和缺失食材数量。
+### 4.3 搜索响应与前端显示对应
 
-重要说明：
+| 后端字段 | 类型 | 前端建议显示 |
+|---|---|---|
+| `parsed.ingredients[].canonical` | `string` | 顶部“识别到的食材”tag，例如 `番茄` |
+| `parsed.ingredients[].raw` | `string` | 原始输入，可作为 tag tooltip 或调试文本 |
+| `parsed.excluded_ingredients[]` | `string[]` | 顶部“不需要”tag |
+| `parsed.need_confirmation[]` | `string[]` | 需要用户确认的低置信度食材 |
+| `total` | `number` | 当前请求条件下的结果总数，例如 `共 2418 个结果` |
+| `items[].recipe_id` | `number` | 点击卡片后请求详情接口 |
+| `items[].title` | `string` | 菜谱卡片主标题 |
+| `items[].dish` | `string \| null` | 菜谱卡片副标题 / 菜品名 |
+| `items[].bucket` | `string` | 结果标签，例如 `马上能做`、`再买 1 样`、`还差几样`、`灵感参考` |
+| `items[].matched` | `string[]` | “已匹配”食材 tag |
+| `items[].missing` | `string[]` | “还缺”食材 tag；当 `count_seasonings_as_ingredients=false` 时基础调味品不会出现在这里 |
+| `items[].reason` | `string` | 推荐原因，可直接显示 |
+| `items[].score` | `number` | 排序分，前端可隐藏 |
+| `items[].quality_score` | `number` | 菜谱质量分，前端可隐藏 |
+| `items[].recipe_tags` | `string[]` | 后端推断出的菜谱标签，可显示在卡片上 |
+| `items[].preference_matches` | `string[]` | 与用户偏好匹配的标签，可显示为高亮 tag |
+| `items[].preference_mismatches` | `string[]` | 未匹配的偏好标签，可隐藏或调试显示 |
+| `items[].preference_score` | `number` | 偏好加权分，前端可隐藏 |
+| `facets.bucket` | `{name:string,count:number}[]` | 可选，用于顶部结果分类统计 |
 
-- `total` 是当前搜索条件下的总结果数，不是当前页数量。
-- `items` 是当前页结果。
-- `matched` 是用户已有食材中命中的部分。
-- `missing` 是菜谱还缺的食材。
-- `bucket` 可作为前端分组标签。
-- `reason` 可直接展示为推荐原因。
-
-前端列表卡片建议展示：
-
-```text
-标题：title
-副标题：dish
-标签：bucket
-命中：matched
-缺少：missing
-原因：reason
-分数：score，可不展示给普通用户
-```
-
-### 4.2 排除食材搜索
-
-请求：
-
-```json
-{
-  "items": ["豆腐", "蒜"],
-  "excluded_items": ["豆瓣酱"],
-  "filters": {},
-  "page": 1,
-  "page_size": 5
-}
-```
-
-效果：
-
-- 如果菜谱中包含 `豆瓣酱`，不会出现在结果里。
-- 前端可以把 `excluded_items` 做成单独的“不要这些”输入区域。
+说明：`preference_mismatches` 只表示该菜谱没有满足某个偏好标签，不代表结果错误。因为食材匹配权重最高，一个菜谱即使没有满足“简单”等次级偏好，也可能因为食材完全匹配而排在前面。
 
 ## 5. 菜谱详情接口
-
-### 5.1 获取详情
 
 ```http
 GET /api/v1/recipes/{recipe_id}
 ```
 
-请求示例：
+前端触发方式：用户点击搜索结果卡片时，把该卡片的 `recipe_id` 拼到 URL 中。
+不要固定请求 `/api/v1/recipes/1`；详情页必须使用当前被点击卡片的 `items[].recipe_id`。
 
-```bash
-curl http://localhost:8000/api/v1/recipes/2
-```
-
-响应示例：
+### 5.1 响应格式
 
 ```json
 {
-  "recipe_id": 2,
-  "source_recipe_id": "r0000002",
-  "title": "家常番茄炒蛋",
-  "dish": "番茄炒蛋",
-  "description": "经典家常快手菜，适合番茄和鸡蛋库存充足时优先推荐。",
+  "recipe_id": 1,
+  "source_recipe_id": "r0000067",
+  "title": "超美味的西红柿蛋汤",
+  "dish": "西红柿蛋汤",
+  "description": "人人都会做的西红柿蛋汤,我只喜欢喝我自己做的,不用加任何味精鸡精,健康美味",
   "quality_score": 1.0,
+  "recipe_tags": ["不辣", "素菜", "复杂", "调料少", "分量少", "适合小孩", "炒"],
   "ingredients": [
     {
       "raw_text": "2个西红柿",
       "canonical_name": "番茄",
-      "quantity": 2.0,
-      "unit": "个",
+      "quantity": null,
+      "unit": null,
       "required": true,
       "position": 1
     },
     {
-      "raw_text": "3枚鸡蛋",
+      "raw_text": "1个鸡蛋",
       "canonical_name": "鸡蛋",
-      "quantity": 3.0,
-      "unit": "枚",
+      "quantity": null,
+      "unit": null,
       "required": true,
       "position": 2
     },
     {
-      "raw_text": "适量盐",
+      "raw_text": "2勺盐",
       "canonical_name": "盐",
+      "quantity": null,
+      "unit": null,
+      "required": false,
+      "position": 3
+    },
+    {
+      "raw_text": "1勺淀粉",
+      "canonical_name": "淀粉",
       "quantity": null,
       "unit": null,
       "required": false,
@@ -436,101 +297,167 @@ curl http://localhost:8000/api/v1/recipes/2
   "steps": [
     {
       "step_no": 1,
-      "text": "西红柿切块，小葱切末，鸡蛋打散"
-    },
-    {
-      "step_no": 2,
-      "text": "热锅放油，倒入鸡蛋炒至凝固后盛出"
+      "text": "热油下葱花爆锅"
     }
   ]
 }
 ```
 
-前端详情页或详情抽屉建议展示：
+说明：上面的 `steps` 只截取了第 1 步作为格式示例，实际详情接口会返回该菜谱的全部步骤。
 
-- `title`
-- `description`
-- `ingredients.raw_text`
-- `ingredients.required`，可用于区分必需食材和基础调味品
-- `steps.text`
-- `quality_score` 可作为调试字段，不一定展示给用户
+### 5.2 详情响应与前端显示对应
 
-## 6. 错误响应
+| 后端字段 | 类型 | 前端建议显示 |
+|---|---|---|
+| `title` | `string` | 详情标题 |
+| `dish` | `string \| null` | 菜品名 / 副标题 |
+| `description` | `string \| null` | 简介，没有则隐藏 |
+| `recipe_tags` | `string[]` | 与搜索结果一致的后端推断标签 |
+| `ingredients[].raw_text` | `string` | 食材原文列表 |
+| `ingredients[].canonical_name` | `string \| null` | 规范食材名，可用于 tag |
+| `ingredients[].required` | `boolean` | `true` 显示为“必需食材”，`false` 显示为“基础调味品” |
+| `ingredients[].position` | `number` | 食材顺序 |
+| `steps[].step_no` | `number` | 步骤序号 |
+| `steps[].text` | `string` | 步骤内容 |
 
-### 6.1 管理接口 token 错误
+## 6. 食材解析接口
 
-请求管理接口但缺少或传错 `X-Admin-Token`：
+该接口可选。用于搜索前预览后端如何理解用户输入。
+
+```http
+POST /api/v1/ingredients/parse
+```
+
+请求：
 
 ```json
 {
-  "detail": "Invalid admin token"
+  "items": ["西红柿2个 鸡蛋3枚", "不想吃香菜"]
 }
-```
-
-HTTP 状态码：
-
-```text
-401
-```
-
-### 6.2 菜谱不存在
-
-请求不存在的菜谱：
-
-```http
-GET /api/v1/recipes/999999
 ```
 
 响应：
 
 ```json
 {
-  "detail": "Recipe not found"
+  "ingredients": [
+    {
+      "raw": "西红柿2个",
+      "canonical": "番茄",
+      "quantity": 2.0,
+      "unit": "个",
+      "confidence": 1.0
+    },
+    {
+      "raw": "鸡蛋3枚",
+      "canonical": "鸡蛋",
+      "quantity": 3.0,
+      "unit": "枚",
+      "confidence": 1.0
+    }
+  ],
+  "excluded_ingredients": ["香菜"],
+  "need_confirmation": []
 }
 ```
 
-HTTP 状态码：
+## 7. 全流程示例
+
+### 7.1 前端搜索按钮触发
+
+用户界面：
 
 ```text
-404
+已有食材：西红柿、鸡蛋
+不需要：香菜
+偏好：不辣、简单、素菜、适合小孩、分量少、调料少、炒
+点击：搜索
 ```
 
-### 6.3 请求体格式错误
+前端请求：
 
-例如 `page_size` 超过 100，FastAPI 会返回 `422` 校验错误。
+```ts
+const response = await fetch("http://127.0.0.1:8000/api/v1/search/by-ingredients", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    items: ["西红柿", "鸡蛋"],
+    excluded_items: ["香菜"],
+    filters: {
+      spice: "not_spicy",
+      complexity: "simple",
+      count_seasonings_as_ingredients: false,
+      diet: "vegetarian",
+      for_children: true,
+      serving_size: "small",
+      seasoning_amount: "few",
+      methods: ["炒"]
+    },
+    page: 1,
+    page_size: 10
+  })
+});
 
-前端建议统一处理：
+const data = await response.json();
+```
 
-- `401`：提示管理权限错误。
-- `404`：提示内容不存在。
-- `422`：提示请求参数错误。
-- `500`：提示服务异常，并保留错误日志。
-
-## 7. 前端页面拆分建议
-
-第一版前端可以只做一个搜索页加详情抽屉：
+前端渲染：
 
 ```text
-SearchPage
-├── IngredientInput
-├── ExcludedInput
-├── ParsedIngredientBar
-├── SearchResultList
-│   └── RecipeCard
-└── RecipeDetailDrawer
+顶部 tag：
+识别到：番茄、鸡蛋
+不需要：香菜
+
+结果卡片：
+标题：超美味的西红柿蛋汤
+副标题：西红柿蛋汤
+标签：马上能做
+菜谱标签：不辣、素菜、复杂、调料少、分量少、适合小孩、炒
+偏好匹配：素菜、不辣、适合小孩、分量少、调料少、炒
+偏好未匹配：简单
+已匹配：番茄、鸡蛋
+还缺：无
+原因：命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00
 ```
 
-推荐交互流程：
+### 7.2 点击卡片查看详情
 
-1. 用户输入已有食材。
-2. 点击搜索。
-3. 前端调用 `/api/v1/search/by-ingredients`。
-4. 顶部展示 `parsed.ingredients` 和 `parsed.excluded_ingredients`。
-5. 列表展示 `items`。
-6. 点击卡片时调用 `/api/v1/recipes/{recipe_id}`。
-7. 在详情抽屉展示完整食材和步骤。
+用户点击第一条搜索结果，前端读取：
 
-## 8. TypeScript 类型参考
+```ts
+const recipeId = data.items[0].recipe_id;
+```
+
+请求详情：
+
+```ts
+const detailResponse = await fetch(`http://127.0.0.1:8000/api/v1/recipes/${recipeId}`);
+const detail = await detailResponse.json();
+```
+
+前端渲染：
+
+```text
+标题：超美味的西红柿蛋汤
+简介：人人都会做的西红柿蛋汤...
+菜谱标签：不辣、素菜、复杂、调料少、分量少、适合小孩、炒
+
+必需食材：
+- 2个西红柿
+- 1个鸡蛋
+
+基础调味品：
+- 2勺盐
+- 1勺淀粉
+
+步骤：
+1. 热油下葱花爆锅
+2. 西红柿下锅...
+```
+
+## 8. TypeScript 类型
 
 ```ts
 export interface ParsedIngredient {
@@ -548,15 +475,23 @@ export interface ParseResponse {
 }
 
 export interface SearchRequest {
-  items: string[];
-  excluded_items: string[];
-  filters: {
+  items?: string[];
+  excluded_items?: string[];
+  filters?: {
     max_minutes?: number | null;
     difficulty_lte?: number | null;
     cuisine?: string[] | null;
+    spice?: "spicy" | "not_spicy" | null;
+    complexity?: "simple" | "complex" | null;
+    count_seasonings_as_ingredients?: boolean;
+    diet?: "meat" | "vegetarian" | null;
+    for_children?: boolean | null;
+    serving_size?: "large" | "small" | null;
+    seasoning_amount?: "many" | "few" | null;
+    methods?: Array<"炒" | "蒸" | "煎" | "拌" | "炖">;
   };
-  page: number;
-  page_size: number;
+  page?: number;
+  page_size?: number;
 }
 
 export interface SearchItem {
@@ -570,6 +505,10 @@ export interface SearchItem {
   bucket: string;
   score: number;
   reason: string;
+  recipe_tags: string[];
+  preference_matches: string[];
+  preference_mismatches: string[];
+  preference_score: number;
 }
 
 export interface SearchResponse {
@@ -589,6 +528,7 @@ export interface RecipeDetail {
   dish: string | null;
   description: string | null;
   quality_score: number;
+  recipe_tags: string[];
   ingredients: Array<{
     raw_text: string;
     canonical_name: string | null;
@@ -603,3 +543,13 @@ export interface RecipeDetail {
   }>;
 }
 ```
+
+## 9. 错误处理
+
+| 状态码 | 场景 | 前端处理 |
+|---|---|---|
+| `404` | 详情接口中 `recipe_id` 不存在 | 提示“菜谱不存在” |
+| `422` | 请求体格式错误，例如 `page_size` 超过 100 | 提示“搜索参数错误” |
+| `500` | 后端服务异常 | 提示“服务异常，请稍后重试” |
+
+管理接口如 `/api/v1/admin/import`、`/api/v1/admin/reset-data` 只用于数据准备，不建议普通前端页面调用。
