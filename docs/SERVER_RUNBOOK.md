@@ -2,7 +2,7 @@
 
 本文档用于在 Windows + WSL 本机或远程 Linux 服务器运行 Fridge2Recipe 后端。
 
-当前 v3 版本仍然不依赖 Docker：
+当前版本仍然不依赖 Docker：
 
 - PostgreSQL 是必需数据库。
 - 搜索主链路可以只依赖 PostgreSQL 跑通。
@@ -17,14 +17,15 @@ http://127.0.0.1:8000
 
 ## 1. v3 功能开关
 
-v3 新增两个可选模型能力：
+v3 新增两个可选模型能力，并提供一个用于课堂 / 展示的快速演示缓存：
 
 | 功能 | 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
 | 搜索结果 rerank 精排 | `RERANK_ENABLED` | `false` | 开启后，搜索接口会把规则排序后的前若干结果交给 DeepSeek 重新打分 |
 | 智能改良版菜谱生成 | `LLM_ENHANCE_ENABLED` | `false` | 开启后，可以调用 `/api/v1/recipes/{recipe_id}/enhance` 生成更适合用户偏好的做法 |
+| 快速演示缓存 | `DEMO_CACHE_ENABLED` | `false` | 开启后，命中固定三组输入时，`/api/v1/demo/full-flow` 直接返回清洗好的搜索、rerank 和智能生成结果 |
 
-没有配置 DeepSeek Key 或关闭开关时，后端仍可正常运行，只是回到 v2 的规则排序和原始详情接口。
+没有配置 DeepSeek Key 或关闭开关时，后端仍可正常运行，只是回到 v2 的规则排序和原始详情接口。演示缓存只用于减少展示时等待模型返回的时间，不影响正式搜索接口。
 
 ## 2. Windows + WSL 本机运行
 
@@ -211,6 +212,9 @@ RERANK_ENABLED=false
 RERANK_TOP_K=20
 RERANK_WEIGHT=0.35
 LLM_ENHANCE_ENABLED=false
+
+DEMO_CACHE_ENABLED=false
+DEMO_CACHE_PATH=data/demo/full_flow_cases.json
 ```
 
 如果要开启 v3 的 DeepSeek 能力，在 `.env` 中填写你的 Key，并打开开关：
@@ -221,12 +225,22 @@ RERANK_ENABLED=true
 LLM_ENHANCE_ENABLED=true
 ```
 
+如果只是展示功能、想避免等待模型请求，可以开启演示缓存：
+
+```env
+DEMO_CACHE_ENABLED=true
+DEMO_CACHE_PATH=data/demo/full_flow_cases.json
+```
+
+开启后，命中三组固定输入时会直接返回清洗后的全流程结果；未命中时仍可走实时搜索和生成。
+
 注意：
 
 - 不要把真实 `DEEPSEEK_API_KEY` 提交到 Git。
 - 如果模型接口返回模型名不可用，可把 `DEEPSEEK_MODEL` 改成你 DeepSeek 账号当前可用的模型名。
 - 关闭 `RERANK_ENABLED` 时，搜索接口仍按规则排序。
 - 关闭 `LLM_ENHANCE_ENABLED` 时，智能生成接口会返回 `503`。
+- 关闭 `DEMO_CACHE_ENABLED` 时，演示缓存接口会返回 `404`，全流程脚本会自动回退实时流程。
 
 ### 2.8 启动后端
 
@@ -461,12 +475,19 @@ curl -X POST http://localhost:8000/api/v1/recipes/1/enhance \
 -> 输出 5 个带搜索排序信息和智能生成内容的菜谱
 ```
 
-确认 `.env` 已开启：
+如果要实时调用 DeepSeek，确认 `.env` 已开启：
 
 ```env
 DEEPSEEK_API_KEY=你的DeepSeek API Key
 RERANK_ENABLED=true
 LLM_ENHANCE_ENABLED=true
+```
+
+如果只是快速展示功能，可以改为开启演示缓存。命中固定输入时，脚本会优先返回缓存结果，不再等待 DeepSeek：
+
+```env
+DEMO_CACHE_ENABLED=true
+DEMO_CACHE_PATH=data/demo/full_flow_cases.json
 ```
 
 重启后端后，在项目根目录执行：
@@ -485,6 +506,74 @@ python scripts/full_flow_generate_top5.py \
   --limit 5 \
   --timeout 180 \
   --retries 1
+```
+
+如果缓存命中，输出中会包含：
+
+```json
+{
+  "cache_hit": true,
+  "case_id": "tomato_egg_cucumber_child",
+  "strict_rerank_hit": true,
+  "cache_note": "命中演示缓存：该结果来自 data/test_case.jsonl 中 rerank 成功且智能生成成功的记录，已按 recipe_id 去重。"
+}
+```
+
+当前演示缓存支持三组输入：
+
+```bash
+python scripts/full_flow_generate_top5.py \
+  --items "西红柿,鸡蛋,黄瓜" \
+  --excluded "香菜" \
+  --spice not_spicy \
+  --complexity simple \
+  --diet vegetarian \
+  --for-children \
+  --serving-size small \
+  --seasoning-amount few \
+  --methods "炒,拌" \
+  --limit 5 \
+  --timeout 180 \
+  --retries 1
+
+python scripts/full_flow_generate_top5.py \
+  --items "土豆,鸡,黄瓜" \
+  --excluded "香菜" \
+  --spice spicy \
+  --complexity complex \
+  --diet meat \
+  --for-children \
+  --serving-size large \
+  --seasoning-amount many \
+  --methods "炒,炖" \
+  --limit 5 \
+  --timeout 180 \
+  --retries 1
+
+python scripts/full_flow_generate_top5.py \
+  --items "土豆,鸡,黄瓜" \
+  --excluded "香菜" \
+  --spice spicy \
+  --complexity complex \
+  --diet meat \
+  --serving-size large \
+  --seasoning-amount many \
+  --methods "炒,炖" \
+  --limit 5 \
+  --timeout 180 \
+  --retries 1
+```
+
+如果要强制实时测试，不走演示缓存，添加：
+
+```bash
+--skip-demo-cache
+```
+
+如果要确认必须命中演示缓存，添加：
+
+```bash
+--require-demo-cache
 ```
 
 输出结构：

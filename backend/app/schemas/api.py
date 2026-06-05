@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -120,3 +120,35 @@ class RecipeEnhanceResponse(BaseModel):
     tips: list[str] = Field(default_factory=list)
     model: str
     disclaimer: str
+
+
+class FullFlowInput(BaseModel):
+    items: list[str] = Field(default_factory=list)
+    excluded_items: list[str] = Field(default_factory=list)
+    filters: SearchFilters = Field(default_factory=SearchFilters)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class DemoFullFlowRequest(BaseModel):
+    items: list[str] = Field(default_factory=list)
+    excluded_items: list[str] = Field(default_factory=list)
+    filters: SearchFilters = Field(default_factory=SearchFilters)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class FullFlowItem(BaseModel):
+    rank: int
+    search_result: SearchItem
+    generated_recipe: RecipeEnhanceResponse | None = None
+    generation_error: str | None = None
+
+
+class DemoFullFlowResponse(BaseModel):
+    input: FullFlowInput
+    rerank_status: dict[str, Any] | None = None
+    search_total: int
+    items: list[FullFlowItem]
+    cache_hit: bool
+    case_id: str
+    strict_rerank_hit: bool
+    cache_note: str

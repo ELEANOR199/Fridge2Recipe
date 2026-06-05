@@ -6,8 +6,18 @@ from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.db.session import get_db
 from app.models.tables import Recipe
-from app.schemas.api import ImportRequest, ParseRequest, RecipeDetail, RecipeEnhanceRequest, RecipeEnhanceResponse, SearchRequest
+from app.schemas.api import (
+    DemoFullFlowRequest,
+    DemoFullFlowResponse,
+    ImportRequest,
+    ParseRequest,
+    RecipeDetail,
+    RecipeEnhanceRequest,
+    RecipeEnhanceResponse,
+    SearchRequest,
+)
 from app.services.deepseek_client import DeepSeekError
+from app.services.demo_cache import get_demo_full_flow_response
 from app.services.opensearch_indexer import reindex_recipes
 from app.services.parser import parse_ingredients
 from app.services.search import search_by_ingredients
@@ -96,6 +106,25 @@ def parse(payload: ParseRequest, db: Session = Depends(get_db)):
 def search(payload: SearchRequest, db: Session = Depends(get_db)):
     """按用户已有食材搜索菜谱，并返回可解释结果。"""
     return search_by_ingredients(db, payload)
+
+
+@router.post("/api/v1/demo/full-flow", response_model=DemoFullFlowResponse)
+def demo_full_flow(payload: DemoFullFlowRequest) -> DemoFullFlowResponse:
+    """命中固定演示输入时，直接返回已清洗的搜索、rerank 和智能生成结果。"""
+    settings = get_settings()
+    if not settings.demo_cache_enabled:
+        raise HTTPException(status_code=404, detail="Demo cache is disabled")
+
+    try:
+        cached = get_demo_full_flow_response(payload, settings)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=f"Demo cache file not found: {settings.demo_cache_path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if cached is None:
+        raise HTTPException(status_code=404, detail="Demo cache case not found")
+    return cached
 
 
 @router.get("/api/v1/recipes/{recipe_id}", response_model=RecipeDetail)

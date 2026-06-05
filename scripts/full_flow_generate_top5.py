@@ -64,6 +64,19 @@ def run_full_flow(args: argparse.Namespace) -> dict[str, Any]:
         "page": 1,
         "page_size": args.limit,
     }
+    demo_payload = {
+        "items": items,
+        "excluded_items": excluded_items,
+        "filters": filters,
+        "limit": args.limit,
+    }
+    if not args.skip_demo_cache:
+        try:
+            return post_json(args.base_url, "/api/v1/demo/full-flow", demo_payload, args.timeout)
+        except RuntimeError:
+            if args.require_demo_cache:
+                raise
+
     search_data = post_json(args.base_url, "/api/v1/search/by-ingredients", search_payload, args.timeout)
 
     generated_items: list[dict[str, Any]] = []
@@ -129,6 +142,8 @@ def main() -> int:
     parser.add_argument("--seasoning-amount", choices=["many", "few"], default=None)
     parser.add_argument("--methods", default="", help="烹饪手法，逗号分隔，例如：炒,蒸,炸")
     parser.add_argument("--count-seasonings", action="store_true", help="把基础调味品计入缺失食材")
+    parser.add_argument("--skip-demo-cache", action="store_true", help="跳过演示缓存，强制实时搜索和生成")
+    parser.add_argument("--require-demo-cache", action="store_true", help="演示缓存未命中时直接失败，不回退实时流程")
 
     args = parser.parse_args()
     if args.limit < 1:

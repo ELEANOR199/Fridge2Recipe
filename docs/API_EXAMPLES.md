@@ -83,6 +83,164 @@ GET /health
 
 搜索接口本身也会解析食材，因此前端可以不单独调用解析接口，直接调用搜索接口。
 
+## 快速演示模式接口
+
+为了展示功能时减少 DeepSeek 请求耗时，后端提供一个可选的演示缓存接口。开启后，如果前端输入命中固定三组测试输入，后端会直接从 `data/demo/full_flow_cases.json` 返回清洗后的“搜索 + rerank + 智能生成”全流程结果。
+
+开启方式是在后端 `.env` 中设置：
+
+```env
+DEMO_CACHE_ENABLED=true
+DEMO_CACHE_PATH=data/demo/full_flow_cases.json
+```
+
+修改后重启后端。
+
+前端推荐流程：
+
+```text
+用户点击“生成 5 个菜谱”
+  -> POST /api/v1/demo/full-flow
+  -> 如果 200：直接渲染缓存返回的搜索结果和生成菜谱
+  -> 如果 404：说明未开启缓存或输入未命中，回退到实时接口
+  -> POST /api/v1/search/by-ingredients
+  -> 对返回的前 N 个 recipe_id 逐个 POST /api/v1/recipes/{recipe_id}/enhance
+```
+
+演示缓存接口：
+
+```http
+POST /api/v1/demo/full-flow
+```
+
+请求格式：
+
+```json
+{
+  "items": ["西红柿", "鸡蛋", "黄瓜"],
+  "excluded_items": ["香菜"],
+  "filters": {
+    "spice": "not_spicy",
+    "complexity": "simple",
+    "count_seasonings_as_ingredients": false,
+    "diet": "vegetarian",
+    "for_children": true,
+    "serving_size": "small",
+    "seasoning_amount": "few",
+    "methods": ["炒", "拌"]
+  },
+  "limit": 5
+}
+```
+
+响应格式：
+
+```json
+{
+  "input": {
+    "items": ["西红柿", "鸡蛋", "黄瓜"],
+    "excluded_items": ["香菜"],
+    "filters": {
+      "spice": "not_spicy",
+      "complexity": "simple",
+      "count_seasonings_as_ingredients": false,
+      "diet": "vegetarian",
+      "for_children": true,
+      "serving_size": "small",
+      "seasoning_amount": "few",
+      "methods": ["炒", "拌"]
+    },
+    "limit": 5
+  },
+  "rerank_status": {
+    "enabled": true,
+    "configured": true,
+    "attempted": true,
+    "applied": true,
+    "candidate_count": 5,
+    "applied_count": 1,
+    "model": "deepseek-v4-pro",
+    "error": null
+  },
+  "search_total": 2418,
+  "items": [
+    {
+      "rank": 1,
+      "search_result": {
+        "recipe_id": 1,
+        "source_recipe_id": "r0000067",
+        "title": "超美味的西红柿蛋汤",
+        "dish": "西红柿蛋汤",
+        "quality_score": 1.0,
+        "matched": ["番茄", "鸡蛋"],
+        "missing": [],
+        "bucket": "马上能做",
+        "score": 1.157,
+        "reason": "命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00",
+        "recipe_tags": ["不辣", "素菜", "复杂", "调料少", "分量少", "适合小孩", "炒"],
+        "preference_matches": ["素菜", "不辣", "适合小孩", "分量少", "调料少", "炒"],
+        "preference_mismatches": ["简单"],
+        "preference_score": 0.34,
+        "rerank_score": null,
+        "rerank_reason": null
+      },
+      "generated_recipe": {
+        "recipe_id": 1,
+        "source_recipe_id": "r0000067",
+        "original_title": "超美味的西红柿蛋汤",
+        "generated_title": "番茄黄瓜炒鸡蛋",
+        "summary": "酸甜开胃，颜色鲜艳，简单快手，非常适合小朋友的素食小炒。",
+        "bucket": "马上能做",
+        "bucket_reason": "生成菜谱所需主要食材已被已有食材覆盖，基础调味品和清水不计入缺失。",
+        "matched": ["鸡蛋", "番茄", "黄瓜"],
+        "missing": [],
+        "ingredients": ["鸡蛋 2个", "西红柿 2个", "黄瓜 1根"],
+        "steps": ["黄瓜洗净切薄片，西红柿洗净切小块，鸡蛋打散备用。"],
+        "tips": ["想要口感更滑嫩，可在出锅前淋入少许水淀粉。"],
+        "model": "deepseek-v4-pro",
+        "disclaimer": "该结果由大模型根据原始菜谱和用户偏好生成，适合作为改良建议，请以实际烹饪情况调整。"
+      },
+      "generation_error": null
+    }
+  ],
+  "cache_hit": true,
+  "case_id": "tomato_egg_cucumber_child",
+  "strict_rerank_hit": true,
+  "cache_note": "来自 test_case.jsonl 中 rerank 成功且智能生成成功的结果。"
+}
+```
+
+字段含义：
+
+| 字段 | 前端用途 |
+|---|---|
+| `items[].search_result` | 搜索结果卡片，字段含义与 `/api/v1/search/by-ingredients` 的 `items[]` 完全一致 |
+| `items[].generated_recipe` | 已生成的智能菜谱，字段含义与 `/api/v1/recipes/{recipe_id}/enhance` 完全一致 |
+| `items[].generated_recipe.bucket` | 前端可显示为“马上能做 / 再买 1 样 / 还差几样 / 灵感参考”标签 |
+| `items[].generated_recipe.bucket_reason` | 前端可显示为可用性说明 |
+| `cache_hit` | `true` 表示本次结果来自演示缓存 |
+| `case_id` | 命中的演示样例编号 |
+| `strict_rerank_hit` | `true` 表示该样例来自原始记录中 rerank 成功且智能生成成功的结果；第二组为 `false` |
+| `cache_note` | 数据来源说明，第二组会说明原始记录没有 rerank 成功样本 |
+
+当前清洗后的三组准确返回数据保存在 `data/demo/full_flow_cases.json`，前端可按接口直接渲染。命中结果概览：
+
+| case_id | 输入 | 是否来自 rerank 成功记录 | 返回 recipe_id 顺序 |
+|---|---|---|---|
+| `tomato_egg_cucumber_child` | 西红柿、鸡蛋、黄瓜；不需要香菜；不辣、简单、素菜、适合小孩、分量少、调料少、炒/拌 | 是 | `1, 2262, 1653, 1126, 1075` |
+| `potato_chicken_cucumber_child` | 土豆、鸡、黄瓜；不需要香菜；辣、复杂、荤菜、适合小孩、分量多、调料多、炒/炖 | 否，原始 `test_case.jsonl` 没有该输入的 rerank 成功记录，只保留智能生成成功结果 | `2154, 2144, 2008, 2339` |
+| `potato_chicken_cucumber` | 土豆、鸡、黄瓜；不需要香菜；辣、复杂、荤菜、分量多、调料多、炒/炖 | 是 | `2144, 1259, 2339, 782` |
+
+如果接口返回：
+
+| 状态码 | 含义 | 前端处理 |
+|---|---|---|
+| `200` | 命中缓存 | 直接渲染结果 |
+| `404` | 缓存未开启或输入未命中 | 回退到实时搜索和生成流程 |
+| `503` | 缓存文件缺失或格式错误 | 提示后端配置问题，或回退实时流程 |
+
+注意：未命中缓存时，后端日志中出现 `POST /api/v1/demo/full-flow 404 Not Found` 是预期回退信号，不代表后端异常。
+
 ## 3. 输入标签与后端字段对应
 
 | 前端区域 | 前端含义 | 后端字段 | 类型 | 示例 |
@@ -738,15 +896,45 @@ export interface RecipeEnhanceResponse {
   model: string;
   disclaimer: string;
 }
+
+export interface DemoFullFlowRequest {
+  items?: string[];
+  excluded_items?: string[];
+  filters?: SearchRequest["filters"];
+  limit?: number;
+}
+
+export interface FullFlowItem {
+  rank: number;
+  search_result: SearchItem;
+  generated_recipe: RecipeEnhanceResponse | null;
+  generation_error: string | null;
+}
+
+export interface DemoFullFlowResponse {
+  input: {
+    items: string[];
+    excluded_items: string[];
+    filters: SearchRequest["filters"];
+    limit: number;
+  };
+  rerank_status: SearchResponse["facets"]["rerank"] | Record<string, unknown> | null;
+  search_total: number;
+  items: FullFlowItem[];
+  cache_hit: boolean;
+  case_id: string;
+  strict_rerank_hit: boolean;
+  cache_note: string;
+}
 ```
 
 ## 10. 错误处理
 
 | 状态码 | 场景 | 前端处理 |
 |---|---|---|
-| `404` | 详情接口中 `recipe_id` 不存在 | 提示“菜谱不存在” |
+| `404` | 详情接口中 `recipe_id` 不存在；或演示缓存接口未开启 / 未命中 | 详情页提示“菜谱不存在”；演示缓存未命中时回退实时流程 |
 | `422` | 请求体格式错误，例如 `page_size` 超过 100 | 提示“搜索参数错误” |
-| `503` | 智能生成接口中 DeepSeek 未配置、未开启，或模型请求失败 | 提示“智能生成暂不可用” |
+| `503` | 智能生成接口中 DeepSeek 未配置、未开启，或模型请求失败；或演示缓存文件缺失 / 格式错误 | 提示“智能生成暂不可用”或“演示缓存配置异常” |
 | `500` | 后端服务异常 | 提示“服务异常，请稍后重试” |
 
 管理接口如 `/api/v1/admin/import`、`/api/v1/admin/reset-data` 只用于数据准备，不建议普通前端页面调用。

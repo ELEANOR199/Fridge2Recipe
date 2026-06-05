@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     rerank_top_k: int = 20
     rerank_weight: float = 0.35
     llm_enhance_enabled: bool = False
+    demo_cache_enabled: bool = False
+    demo_cache_path: str = "data/demo/full_flow_cases.json"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
