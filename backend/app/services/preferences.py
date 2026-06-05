@@ -54,7 +54,7 @@ MEAT_SEAFOOD_KEYWORDS = (
 CHILD_UNFRIENDLY_KEYWORDS = ("酒", "料酒", "白酒", "黄酒", "咖啡")
 LARGE_SERVING_KEYWORDS = ("大份", "一锅", "全家", "家庭", "聚餐", "多人", "宴客")
 SMALL_SERVING_KEYWORDS = ("小份", "一人食", "单人", "宝宝", "儿童", "迷你")
-COOKING_METHODS = ("炒", "蒸", "煎", "拌", "炖")
+COOKING_METHODS = ("炒", "蒸", "煎", "拌", "炖", "炸")
 
 
 @dataclass(frozen=True)

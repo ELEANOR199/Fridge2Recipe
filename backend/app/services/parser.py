@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.api import ParsedIngredient, ParseResponse
 from app.services.ingredients import load_alias_map
-from app.services.normalizer import has_exclude_intent, normalize_ingredient, split_items
+from app.services.normalizer import has_exclude_intent, normalize_ingredient, split_items, strip_exclude_intent
 
 
 def parse_ingredients(db: Session, items: list[str]) -> ParseResponse:
@@ -18,11 +18,12 @@ def parse_ingredients(db: Session, items: list[str]) -> ParseResponse:
     need_confirmation: list[str] = []
 
     for chunk in split_items(items):
-        normalized = normalize_ingredient(chunk, alias_map)
+        exclude_intent = has_exclude_intent(chunk)
+        normalized = normalize_ingredient(strip_exclude_intent(chunk) if exclude_intent else chunk, alias_map)
 
         # “不吃香菜”“不要猪肉”这类文本会被转入排除列表。
         # 搜索时会过滤包含这些规范食材名的菜谱。
-        if has_exclude_intent(chunk):
+        if exclude_intent:
             excluded.append(normalized.canonical)
             continue
 

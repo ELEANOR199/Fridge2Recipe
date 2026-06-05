@@ -6,12 +6,14 @@ from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.db.session import get_db
 from app.models.tables import Recipe
-from app.schemas.api import ImportRequest, ParseRequest, RecipeDetail, SearchRequest
+from app.schemas.api import ImportRequest, ParseRequest, RecipeDetail, RecipeEnhanceRequest, RecipeEnhanceResponse, SearchRequest
+from app.services.deepseek_client import DeepSeekError
 from app.services.opensearch_indexer import reindex_recipes
 from app.services.parser import parse_ingredients
 from app.services.search import search_by_ingredients
 from app.services.normalizer import is_basic_seasoning
 from app.services.preferences import extract_recipe_features, recipe_tags
+from app.services.recipe_enhancer import enhance_recipe_with_llm
 from app.workers.import_xiachufang import import_xiachufang_jsonl
 
 router = APIRouter()
@@ -131,3 +133,26 @@ def recipe_detail(recipe_id: int, db: Session = Depends(get_db)) -> RecipeDetail
         ],
         steps=[{"step_no": step.step_no, "text": step.text} for step in recipe.steps],
     )
+
+
+@router.post("/api/v1/recipes/{recipe_id}/enhance", response_model=RecipeEnhanceResponse)
+def enhance_recipe(
+    recipe_id: int,
+    payload: RecipeEnhanceRequest,
+    db: Session = Depends(get_db),
+) -> RecipeEnhanceResponse:
+    """根据原始菜谱和用户偏好生成智能改良版做法。"""
+    recipe = db.scalar(
+        select(Recipe)
+        .options(selectinload(Recipe.ingredients), selectinload(Recipe.steps))
+        .where(Recipe.id == recipe_id)
+    )
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+
+    try:
+        return enhance_recipe_with_llm(recipe, payload, get_settings())
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"智能生成失败: {exc}") from exc

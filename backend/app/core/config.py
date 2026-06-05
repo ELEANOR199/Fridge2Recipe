@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     admin_token: str = "dev-token"
     cors_allowed_origins: str = ""
     sample_data_path: str = "data/xiachufang/recipes_subset.jsonl"
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_timeout_seconds: int = 30
+    rerank_enabled: bool = False
+    rerank_top_k: int = 20
+    rerank_weight: float = 0.35
+    llm_enhance_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

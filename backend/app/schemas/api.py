@@ -32,7 +32,7 @@ class SearchFilters(BaseModel):
     for_children: bool | None = None
     serving_size: Literal["large", "small"] | None = None
     seasoning_amount: Literal["many", "few"] | None = None
-    methods: list[Literal["炒", "蒸", "煎", "拌", "炖"]] = Field(default_factory=list)
+    methods: list[Literal["炒", "蒸", "煎", "拌", "炖", "炸"]] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):
@@ -58,6 +58,8 @@ class SearchItem(BaseModel):
     preference_matches: list[str] = Field(default_factory=list)
     preference_mismatches: list[str] = Field(default_factory=list)
     preference_score: float = 0.0
+    rerank_score: float | None = None
+    rerank_reason: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -95,3 +97,26 @@ class RecipeDetail(BaseModel):
     recipe_tags: list[str] = Field(default_factory=list)
     ingredients: list[RecipeIngredientOut]
     steps: list[RecipeStepOut]
+
+
+class RecipeEnhanceRequest(BaseModel):
+    user_items: list[str] = Field(default_factory=list)
+    excluded_items: list[str] = Field(default_factory=list)
+    preferences: SearchFilters = Field(default_factory=SearchFilters)
+
+
+class RecipeEnhanceResponse(BaseModel):
+    recipe_id: int
+    source_recipe_id: str | None
+    original_title: str
+    generated_title: str
+    summary: str
+    bucket: str
+    bucket_reason: str
+    matched: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    ingredients: list[str]
+    steps: list[str]
+    tips: list[str] = Field(default_factory=list)
+    model: str
+    disclaimer: str

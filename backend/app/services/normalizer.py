@@ -142,6 +142,14 @@ def has_exclude_intent(text: str) -> bool:
     return any(word in text for word in EXCLUDE_INTENT_WORDS)
 
 
+def strip_exclude_intent(text: str) -> str:
+    """移除排除意图词，只保留真正的食材名。"""
+    cleaned = text.strip()
+    for word in EXCLUDE_INTENT_WORDS:
+        cleaned = cleaned.replace(word, "")
+    return cleaned.strip() or text.strip()
+
+
 def parse_quantity_and_unit(text: str) -> tuple[float | None, str | None, str]:
     """提取食材文本中的数量和单位，并返回剩余食材文本。"""
     text = text.strip()

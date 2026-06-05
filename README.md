@@ -10,6 +10,7 @@
 - 支持 `xiachufang` JSONL 真实子集数据导入
 - 支持食材解析、数量单位提取、alias 归一
 - 支持 PostgreSQL 兜底搜索、matched / missing / bucket / reason 解释
+- 支持可选 DeepSeek 大模型 rerank 精排和智能改良版菜谱生成
 
 项目目录和关键代码说明见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
 远程服务器运行后端的完整步骤见 [docs/SERVER_RUNBOOK.md](docs/SERVER_RUNBOOK.md)。
@@ -29,6 +30,7 @@ Windows 本机推荐使用 WSL 运行后端。本地或服务器都需要：
 可选：
 
 - OpenSearch 2.x，仅在调用 `/api/v1/admin/reindex` 时需要
+- DeepSeek API Key，仅在开启 rerank 或智能改良版菜谱生成时需要
 
 Conda 环境文件见 [environment.yml](environment.yml)。
 如果不用 Conda，也可以参考 [backend/requirements.txt](backend/requirements.txt) 通过 pip 安装。
@@ -132,6 +134,19 @@ cp .env.example .env
 DATABASE_URL=postgresql+psycopg://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe
 ```
 
+如果要开启 DeepSeek rerank 或智能改良版菜谱生成，在 `.env` 中填写：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=60
+RERANK_ENABLED=true
+LLM_ENHANCE_ENABLED=true
+```
+
+如果不开启这两个开关，后端仍按 v2 的规则排序在本机正常运行。
+
 启动后端：
 
 ```bash
@@ -194,6 +209,34 @@ curl -X POST http://localhost:8000/api/v1/search/by-ingredients `
 ```powershell
 curl http://localhost:8000/api/v1/recipes/1
 ```
+
+## 可选：测试智能改良版菜谱生成
+
+需要先在 `.env` 中配置 `DEEPSEEK_API_KEY` 并设置 `LLM_ENHANCE_ENABLED=true`。
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/recipes/1/enhance `
+  -H "Content-Type: application/json" `
+  -d "{\"user_items\":[\"西红柿\",\"鸡蛋\"],\"excluded_items\":[\"香菜\"],\"preferences\":{\"spice\":\"not_spicy\",\"complexity\":\"simple\",\"for_children\":true}}"
+```
+
+## 可选：全流程测试排序并生成 5 个菜谱
+
+需要先开启 `RERANK_ENABLED=true` 和 `LLM_ENHANCE_ENABLED=true`，并保持后端运行。
+
+```bash
+python scripts/full_flow_generate_top5.py \
+  --items "西红柿,鸡蛋,黄瓜" \
+  --excluded "香菜" \
+  --spice not_spicy \
+  --for-children \
+  --methods "炒,拌" \
+  --limit 5 \
+  --timeout 180 \
+  --retries 1
+```
+
+脚本会先搜索排序前 5 个菜谱，再逐个调用智能生成接口，最终输出完整 JSON。单个生成请求失败时不会中断整体流程，会在该条结果的 `generation_error` 中记录原因。
 
 ## 可选：重建 OpenSearch 索引
 

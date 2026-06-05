@@ -2,6 +2,8 @@
 
 本文档面向前端开发。当前后端支持“已有食材 / 不需要食材 / 偏好标签”进行菜谱筛选。食材命中权重最高，其次是荤素和辣不辣，其余偏好用于小幅调整排序。默认情况下基础调味品不会计入缺失食材，例如 `盐`、`糖`、`食用油`、`生抽`、`醋`、`胡椒`、`淀粉` 等。
 
+v3 增加了可选 DeepSeek 大模型能力：开启 `RERANK_ENABLED=true` 后，搜索接口会对规则排序后的前若干结果进行模型精排；开启 `LLM_ENHANCE_ENABLED=true` 后，详情页可以调用智能改良版菜谱生成接口。两个能力都通过 `.env` 开关控制，关闭时后端仍按 v2 逻辑正常运行。
+
 ## 1. 后端地址
 
 本机后端地址固定使用：
@@ -88,6 +90,8 @@ GET /health
 | 已有食材输入框 / tag | 用户拥有、希望用于匹配的食材 | `items` | `string[]` | `["西红柿", "鸡蛋"]` |
 | 不需要食材输入框 / tag | 用户不想看到的食材，含有这些食材的菜谱会被排除 | `excluded_items` | `string[]` | `["香菜"]` |
 
+`items` 和 `excluded_items` 都可以传干净食材名；解析接口也支持识别“不想吃香菜”“不要猪肉”这类自然语言排除表达，并会归一为真正的食材名。
+
 偏好标签统一放在 `filters` 中：
 
 | 前端标签 | 后端字段 | 可选值 | 说明 |
@@ -96,10 +100,12 @@ GET /health
 | 简单 / 复杂 | `filters.complexity` | `"simple"` / `"complex"` | 简单表示步骤数 `<= 5`，复杂表示步骤数 `> 5` |
 | 调味料是否算食材 | `filters.count_seasonings_as_ingredients` | `true` / `false` | `false` 时基础调味品不计入 `missing`，默认 `false` |
 | 荤菜 / 素菜 | `filters.diet` | `"meat"` / `"vegetarian"` | 影响排序，荤素权重较高 |
-| 是否给小孩 | `filters.for_children` | `true` / `false` | `true` 时偏好不辣、步骤不太多、少酒类词的菜谱 |
+| 是否给小孩 | `filters.for_children` | `true` / `false` | `true` 时偏好不辣、步骤不太多、少酒类词的菜谱；`false` 或不传表示不启用该偏好 |
 | 分量多 / 少 | `filters.serving_size` | `"large"` / `"small"` | 根据标题、描述和食材数量粗略推断 |
 | 调料多 / 少 | `filters.seasoning_amount` | `"many"` / `"few"` | 根据基础调味品数量和占比推断 |
-| 烹饪手法 | `filters.methods` | `["炒","蒸","煎","拌","炖"]` | 可多选 |
+| 烹饪手法 | `filters.methods` | `["炒","蒸","煎","拌","炖","炸"]` | 可多选 |
+
+除 `excluded_items`、`max_minutes`、`difficulty_lte`、`cuisine` 外，偏好标签主要用于调整排序分，不会把不完全匹配的菜谱硬过滤掉。
 
 后端还保留以下兼容字段，当前数据中大多为空，前端第一版可以不做：
 
@@ -175,7 +181,7 @@ POST /api/v1/search/by-ingredients
       }
     ],
     "excluded_ingredients": ["香菜"],
-    "need_confirmation": []
+    "need_confirmation": ["香菜"]
   },
   "total": 2418,
   "items": [
@@ -188,12 +194,14 @@ POST /api/v1/search/by-ingredients
       "matched": ["番茄", "鸡蛋"],
       "missing": [],
       "bucket": "马上能做",
-      "score": 1.24,
-      "reason": "命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00",
+      "score": 1.562,
+      "reason": "命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00，模型判断：食材完全覆盖，口味清淡，适合按用户偏好改造成简单儿童友好版",
       "recipe_tags": ["不辣", "素菜", "复杂", "调料少", "分量少", "适合小孩", "炒"],
       "preference_matches": ["素菜", "不辣", "适合小孩", "分量少", "调料少", "炒"],
       "preference_mismatches": ["简单"],
-      "preference_score": 0.34
+      "preference_score": 0.34,
+      "rerank_score": 0.92,
+      "rerank_reason": "食材完全覆盖，口味清淡，适合按用户偏好改造成简单儿童友好版"
     }
   ],
   "facets": {
@@ -206,13 +214,31 @@ POST /api/v1/search/by-ingredients
         "name": "还差几样",
         "count": 358
       }
-    ]
+    ],
+    "rerank": {
+      "enabled": true,
+      "configured": true,
+      "attempted": true,
+      "applied": true,
+      "candidate_count": 10,
+      "applied_count": 10,
+      "model": "deepseek-v4-flash",
+      "fallback": null,
+      "warning": null,
+      "error": null
+    }
   }
 }
 ```
 
 注意：示例响应对应上方带 `excluded_items:["香菜"]` 和偏好标签的请求。实际结果会随导入数据、用户输入和偏好选择变化。
 `facets.bucket` 示例只展示了部分分组，前端应按接口实际返回的数组渲染。
+如果未开启 `RERANK_ENABLED` 或未配置 `DEEPSEEK_API_KEY`，`rerank_score` 和 `rerank_reason` 会是 `null`，排序只使用规则分数。
+`facets.rerank` 会返回 rerank 诊断状态。如果 `items[].rerank_score` 为 `null`，优先查看 `facets.rerank.error`。
+如果 `facets.rerank.error` 是 `read operation timed out`，表示 DeepSeek 响应超过当前超时时间，后端会自动回退规则排序；可调大 `DEEPSEEK_TIMEOUT_SECONDS` 或调小 `RERANK_TOP_K`。
+如果错误是“模型没有返回可解析的 JSON”或“模型返回空内容”，后端会自动关闭 JSON mode 重试一次；仍失败时，会尝试对每个候选菜谱逐条精排。
+逐条兜底成功时，`facets.rerank.fallback` 为 `"single_candidate"`，`facets.rerank.warning` 会记录批量精排失败原因；逐条兜底仍失败时，`facets.rerank.error` 会记录失败原因，搜索结果会回退为规则排序。
+`facets.rerank.model` 和智能生成响应中的 `model` 都来自后端 `.env` 的 `DEEPSEEK_MODEL`，示例值只用于说明字段格式，实际值以运行环境为准。
 
 ### 4.3 搜索响应与前端显示对应
 
@@ -221,7 +247,7 @@ POST /api/v1/search/by-ingredients
 | `parsed.ingredients[].canonical` | `string` | 顶部“识别到的食材”tag，例如 `番茄` |
 | `parsed.ingredients[].raw` | `string` | 原始输入，可作为 tag tooltip 或调试文本 |
 | `parsed.excluded_ingredients[]` | `string[]` | 顶部“不需要”tag |
-| `parsed.need_confirmation[]` | `string[]` | 需要用户确认的低置信度食材 |
+| `parsed.need_confirmation[]` | `string[]` | 需要用户确认的低置信度食材；普通食材和排除食材都可能出现在这里 |
 | `total` | `number` | 当前请求条件下的结果总数，例如 `共 2418 个结果` |
 | `items[].recipe_id` | `number` | 点击卡片后请求详情接口 |
 | `items[].title` | `string` | 菜谱卡片主标题 |
@@ -236,7 +262,19 @@ POST /api/v1/search/by-ingredients
 | `items[].preference_matches` | `string[]` | 与用户偏好匹配的标签，可显示为高亮 tag |
 | `items[].preference_mismatches` | `string[]` | 未匹配的偏好标签，可隐藏或调试显示 |
 | `items[].preference_score` | `number` | 偏好加权分，前端可隐藏 |
-| `facets.bucket` | `{name:string,count:number}[]` | 可选，用于顶部结果分类统计 |
+| `items[].rerank_score` | `number \| null` | DeepSeek 精排分，未开启 rerank 时为 `null` |
+| `items[].rerank_reason` | `string \| null` | DeepSeek 精排原因，前端可作为补充推荐理由 |
+| `facets.bucket` | `{name:string,count:number}[]` | 顶部结果分类统计 |
+| `facets.rerank.enabled` | `boolean` | 后端当前是否开启 `RERANK_ENABLED` |
+| `facets.rerank.configured` | `boolean` | 后端当前是否读到了 `DEEPSEEK_API_KEY` |
+| `facets.rerank.attempted` | `boolean` | 本次搜索是否尝试调用 DeepSeek |
+| `facets.rerank.applied` | `boolean` | DeepSeek 精排结果是否实际应用到排序 |
+| `facets.rerank.candidate_count` | `number` | 本次交给 DeepSeek 的候选数量 |
+| `facets.rerank.applied_count` | `number` | 成功应用 rerank 分数的候选数量 |
+| `facets.rerank.model` | `string` | 本次配置使用的 DeepSeek 模型名 |
+| `facets.rerank.fallback` | `string \| null` | `"single_candidate"` 表示批量精排失败后使用逐条精排兜底 |
+| `facets.rerank.warning` | `string \| null` | rerank 已生效但批量调用有异常时的诊断信息 |
+| `facets.rerank.error` | `string \| null` | rerank 未生效时的诊断原因 |
 
 说明：`preference_mismatches` 只表示该菜谱没有满足某个偏好标签，不代表结果错误。因为食材匹配权重最高，一个菜谱即使没有满足“简单”等次级偏好，也可能因为食材完全匹配而排在前面。
 
@@ -320,7 +358,95 @@ GET /api/v1/recipes/{recipe_id}
 | `steps[].step_no` | `number` | 步骤序号 |
 | `steps[].text` | `string` | 步骤内容 |
 
-## 6. 食材解析接口
+## 6. 智能改良版菜谱生成接口
+
+该接口用于详情页“生成适合我的做法”按钮。它不会修改数据库中的原始菜谱，只返回一份由 DeepSeek 根据原始菜谱和用户偏好生成的改良建议。
+
+需要后端 `.env` 中开启：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+LLM_ENHANCE_ENABLED=true
+```
+
+```http
+POST /api/v1/recipes/{recipe_id}/enhance
+```
+
+请求：
+
+```json
+{
+  "user_items": ["西红柿", "鸡蛋"],
+  "excluded_items": ["香菜"],
+  "preferences": {
+    "spice": "not_spicy",
+    "complexity": "simple",
+    "count_seasonings_as_ingredients": false,
+    "diet": "vegetarian",
+    "for_children": true,
+    "serving_size": "small",
+    "seasoning_amount": "few",
+    "methods": ["炒"]
+  }
+}
+```
+
+响应：
+
+```json
+{
+  "recipe_id": 1,
+  "source_recipe_id": "r0000067",
+  "original_title": "超美味的西红柿蛋汤",
+  "generated_title": "儿童友好版西红柿鸡蛋汤",
+  "summary": "保留原菜谱主要做法，减少刺激性调味，让步骤更适合家庭快手烹饪。",
+  "bucket": "马上能做",
+  "bucket_reason": "生成菜谱所需主要食材已被已有食材覆盖，基础调味品和清水不计入缺失。",
+  "matched": ["番茄", "鸡蛋"],
+  "missing": [],
+  "ingredients": [
+    "西红柿 2 个",
+    "鸡蛋 1 个",
+    "盐 少量",
+    "清水 适量"
+  ],
+  "steps": [
+    "西红柿切小块，鸡蛋打散备用。",
+    "锅中放少量油，加入西红柿炒出汤汁。",
+    "加入清水煮开，慢慢倒入蛋液。",
+    "蛋花成形后加少量盐调味即可。"
+  ],
+  "tips": [
+    "给小孩吃时盐可以再少一点。",
+    "如果怕酸，可以把西红柿多炒一会儿。"
+  ],
+  "model": "deepseek-v4-flash",
+  "disclaimer": "该结果由大模型根据原始菜谱和用户偏好生成，适合作为改良建议，请以实际烹饪情况调整。"
+}
+```
+
+其中 `bucket` 与搜索结果的可用性标签保持一致：
+
+| bucket | 含义 |
+|---|---|
+| `马上能做` | 生成菜谱的主要食材都已覆盖 |
+| `再买 1 样` | 还缺 1 个主要食材 |
+| `还差几样` | 还缺 2 到 3 个主要食材 |
+| `灵感参考` | 还缺 4 个或更多主要食材 |
+
+`matched` 和 `missing` 只统计主要食材，基础调味品和清水不计入缺失。
+
+如果未配置 key 或未开启生成开关，接口会返回 `503`。前端可提示“智能生成暂不可用，请稍后再试”。
+如果模型请求或生成结果处理失败，接口也会返回 `503`，错误原因在响应体 `detail` 字段中，例如：
+
+```json
+{
+  "detail": "智能生成失败: 具体错误原因"
+}
+```
+
+## 7. 食材解析接口
 
 该接口可选。用于搜索前预览后端如何理解用户输入。
 
@@ -361,9 +487,9 @@ POST /api/v1/ingredients/parse
 }
 ```
 
-## 7. 全流程示例
+## 8. 全流程示例
 
-### 7.1 前端搜索按钮触发
+### 8.1 前端搜索按钮触发
 
 用户界面：
 
@@ -422,7 +548,7 @@ const data = await response.json();
 原因：命中 2 个已有食材，必需食材已覆盖，偏好匹配：素菜、不辣、适合小孩、分量少，质量分 1.00
 ```
 
-### 7.2 点击卡片查看详情
+### 8.2 点击卡片查看详情
 
 用户点击第一条搜索结果，前端读取：
 
@@ -457,7 +583,40 @@ const detail = await detailResponse.json();
 2. 西红柿下锅...
 ```
 
-## 8. TypeScript 类型
+### 8.3 点击按钮生成智能改良版
+
+```ts
+const enhancedResponse = await fetch(`${API_BASE_URL}/api/v1/recipes/${recipeId}/enhance`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    user_items: ["西红柿", "鸡蛋"],
+    excluded_items: ["香菜"],
+    preferences: {
+      spice: "not_spicy",
+      complexity: "simple",
+      for_children: true,
+      methods: ["炒"]
+    }
+  })
+});
+
+const enhanced = await enhancedResponse.json();
+```
+
+前端渲染：
+
+```text
+智能改良版标题：儿童友好版西红柿鸡蛋汤
+摘要：保留原菜谱主要做法，减少刺激性调味...
+食材：西红柿 2 个、鸡蛋 1 个、盐 少量、清水 适量
+步骤：按 enhanced.steps 渲染
+小贴士：按 enhanced.tips 渲染
+```
+
+## 9. TypeScript 类型
 
 ```ts
 export interface ParsedIngredient {
@@ -488,7 +647,7 @@ export interface SearchRequest {
     for_children?: boolean | null;
     serving_size?: "large" | "small" | null;
     seasoning_amount?: "many" | "few" | null;
-    methods?: Array<"炒" | "蒸" | "煎" | "拌" | "炖">;
+    methods?: Array<"炒" | "蒸" | "煎" | "拌" | "炖" | "炸">;
   };
   page?: number;
   page_size?: number;
@@ -509,6 +668,8 @@ export interface SearchItem {
   preference_matches: string[];
   preference_mismatches: string[];
   preference_score: number;
+  rerank_score: number | null;
+  rerank_reason: string | null;
 }
 
 export interface SearchResponse {
@@ -516,7 +677,19 @@ export interface SearchResponse {
   total: number;
   items: SearchItem[];
   facets: {
-    bucket?: Array<{ name: string; count: number }>;
+    bucket: Array<{ name: string; count: number }>;
+    rerank: {
+      enabled: boolean;
+      configured: boolean;
+      attempted: boolean;
+      applied: boolean;
+      candidate_count: number;
+      applied_count: number;
+      model: string;
+      fallback: "single_candidate" | null;
+      warning: string | null;
+      error: string | null;
+    };
     [key: string]: unknown;
   };
 }
@@ -542,14 +715,39 @@ export interface RecipeDetail {
     text: string;
   }>;
 }
+
+export interface RecipeEnhanceRequest {
+  user_items?: string[];
+  excluded_items?: string[];
+  preferences?: SearchRequest["filters"];
+}
+
+export interface RecipeEnhanceResponse {
+  recipe_id: number;
+  source_recipe_id: string | null;
+  original_title: string;
+  generated_title: string;
+  summary: string;
+  bucket: string;
+  bucket_reason: string;
+  matched: string[];
+  missing: string[];
+  ingredients: string[];
+  steps: string[];
+  tips: string[];
+  model: string;
+  disclaimer: string;
+}
 ```
 
-## 9. 错误处理
+## 10. 错误处理
 
 | 状态码 | 场景 | 前端处理 |
 |---|---|---|
 | `404` | 详情接口中 `recipe_id` 不存在 | 提示“菜谱不存在” |
 | `422` | 请求体格式错误，例如 `page_size` 超过 100 | 提示“搜索参数错误” |
+| `503` | 智能生成接口中 DeepSeek 未配置、未开启，或模型请求失败 | 提示“智能生成暂不可用” |
 | `500` | 后端服务异常 | 提示“服务异常，请稍后重试” |
 
 管理接口如 `/api/v1/admin/import`、`/api/v1/admin/reset-data` 只用于数据准备，不建议普通前端页面调用。
+搜索接口的 rerank 失败不会返回 `503`，而是保持 `200` 返回搜索结果，并在 `facets.rerank.error` 中说明原因。

@@ -1,23 +1,38 @@
-# 非 Docker 运行后端步骤
+# v3 非 Docker 运行后端步骤
 
-本文档给出两种运行方式：
+本文档用于在 Windows + WSL 本机或远程 Linux 服务器运行 Fridge2Recipe 后端。
 
-1. Windows 本机使用 WSL 运行后端。
-2. 远程 Linux 服务器直接运行后端。
+当前 v3 版本仍然不依赖 Docker：
 
-当前后端不依赖 Docker。搜索主链路使用 PostgreSQL 兜底匹配，因此不安装 OpenSearch 也可以完成导入、解析、搜索和详情查询。
+- PostgreSQL 是必需数据库。
+- 搜索主链路可以只依赖 PostgreSQL 跑通。
+- DeepSeek 是可选能力，用于搜索结果 rerank 和智能改良版菜谱生成。
+- OpenSearch 仍是可选能力，只在调用 `/api/v1/admin/reindex` 时需要。
 
-## 1. Windows + WSL 本机运行
-
-推荐把后端、Conda 环境、PostgreSQL 都放在 WSL Ubuntu 内运行。Windows 浏览器或 PowerShell 可以直接访问：
+默认后端地址：
 
 ```text
-http://localhost:8000
+http://127.0.0.1:8000
 ```
 
-### 1.1 安装 WSL
+## 1. v3 功能开关
 
-在 Windows PowerShell 中检查 WSL：
+v3 新增两个可选模型能力：
+
+| 功能 | 环境变量 | 默认值 | 说明 |
+|---|---|---|---|
+| 搜索结果 rerank 精排 | `RERANK_ENABLED` | `false` | 开启后，搜索接口会把规则排序后的前若干结果交给 DeepSeek 重新打分 |
+| 智能改良版菜谱生成 | `LLM_ENHANCE_ENABLED` | `false` | 开启后，可以调用 `/api/v1/recipes/{recipe_id}/enhance` 生成更适合用户偏好的做法 |
+
+没有配置 DeepSeek Key 或关闭开关时，后端仍可正常运行，只是回到 v2 的规则排序和原始详情接口。
+
+## 2. Windows + WSL 本机运行
+
+推荐把 Python、Conda、PostgreSQL 都安装在 WSL Ubuntu 内。Windows 浏览器和 PowerShell 可以直接访问 WSL 中的后端。
+
+### 2.1 安装 WSL
+
+在 Windows PowerShell 中检查：
 
 ```powershell
 wsl --status
@@ -29,9 +44,9 @@ wsl --status
 wsl --install -d Ubuntu-24.04
 ```
 
-安装完成后重启电脑，并打开 Ubuntu 终端完成用户名和密码初始化。
+安装完成后重启电脑，打开 Ubuntu 终端完成用户名和密码初始化。
 
-### 1.2 安装 WSL 内系统依赖并确认 Conda
+### 2.2 安装系统依赖
 
 在 WSL Ubuntu 中执行：
 
@@ -40,20 +55,27 @@ sudo apt update
 sudo apt install -y git curl postgresql postgresql-contrib
 ```
 
-先确认当前 WSL 里能否直接使用 `conda`：
+确认工具可用：
+
+```bash
+git --version
+curl --version
+psql --version
+```
+
+如果 `sudo apt install` 找不到 PostgreSQL 包，见本文末尾“常见问题”。
+
+### 2.3 确认或安装 Conda
+
+先确认 WSL 内能否使用 Conda：
 
 ```bash
 conda --version
 ```
 
-如果能看到版本号，继续检查其他工具：
+如果提示 `conda: command not found`，说明 Windows 里的 Anaconda 没有进入 WSL。WSL 是独立 Linux 系统，需要在 WSL 内单独安装 Anaconda 或 Miniconda。
 
-```bash
-psql --version
-git --version
-```
-
-如果提示 `conda: command not found`，说明 Windows 里的 Anaconda 没有进入 WSL 环境。WSL 是独立的 Linux 系统，需要在 WSL 内也安装 Anaconda 或 Miniconda。推荐安装轻量的 Miniconda：
+推荐安装 Miniconda：
 
 ```bash
 cd /tmp
@@ -63,9 +85,7 @@ source ~/.bashrc
 conda --version
 ```
 
-安装过程中建议接受默认安装路径，并在提示是否初始化 shell 时选择 `yes`。
-
-如果你确认 Anaconda 已经安装在 WSL 内，但 shell 没初始化，可以执行：
+如果你确认 WSL 内已经安装 Anaconda，但 shell 没初始化：
 
 ```bash
 conda init bash
@@ -73,31 +93,33 @@ source ~/.bashrc
 conda --version
 ```
 
-### 1.3 进入项目目录
+### 2.4 进入项目目录
 
-如果项目仍在 Windows 的 `D:\Fridge2Recipe`：
+如果项目位于 Windows 的 `D:\Fridge2Recipe`：
 
 ```bash
 cd /mnt/d/Fridge2Recipe
 ```
 
-这能直接运行，但 WSL 访问 `/mnt/d` 的文件性能通常比 WSL home 目录慢。更推荐复制到 WSL home：
+这可以直接运行。若追求更好的 WSL 文件性能，可以复制到 WSL home：
 
 ```bash
 cp -r /mnt/d/Fridge2Recipe ~/Fridge2Recipe
 cd ~/Fridge2Recipe
 ```
 
-如果你已经把项目推到 GitHub / GitLab / Gitee，也可以直接 clone：
+如果项目已推送到 Git 仓库，也可以直接 clone：
 
 ```bash
 git clone <your-repo-url> Fridge2Recipe
 cd Fridge2Recipe
 ```
 
-### 1.4 启动并配置 PostgreSQL
+其中 `<your-repo-url>` 替换为你的 GitHub / GitLab / Gitee 仓库地址。
 
-WSL 中通常用 `service` 启动 PostgreSQL：
+### 2.5 启动并配置 PostgreSQL
+
+WSL 中通常使用 `service`：
 
 ```bash
 sudo service postgresql start
@@ -110,7 +132,7 @@ sudo service postgresql status
 sudo -u postgres psql
 ```
 
-执行以下 SQL：
+执行：
 
 ```sql
 CREATE USER fridge WITH PASSWORD 'fridge_dev_password';
@@ -118,15 +140,15 @@ CREATE DATABASE fridge2recipe OWNER fridge;
 \q
 ```
 
+如果用户或数据库已存在，可以跳过创建步骤。
+
 测试连接：
 
 ```bash
 psql "postgresql://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe" -c "select now();"
 ```
 
-如果重复执行创建用户或数据库时报已存在，可以跳过或先删除旧库。测试阶段也可以重建数据库，但注意这会清空已有数据。
-
-### 1.5 创建 Conda 环境
+### 2.6 创建或更新 Conda 环境
 
 在项目根目录执行：
 
@@ -135,14 +157,16 @@ conda env create -f environment.yml
 conda activate fridge2recipe
 ```
 
-如果环境已经存在，更新环境：
+如果环境已经存在：
 
 ```bash
 conda activate fridge2recipe
 conda env update -f environment.yml --prune
 ```
 
-如果创建环境时访问 `repo.anaconda.com` 超时，可以先配置 Conda 国内镜像：
+v3 的 DeepSeek 调用使用 Python 标准库 HTTP 客户端，不需要额外安装 `openai` 或 `httpx`。
+
+如果 Conda 访问 `repo.anaconda.com` 超时，可以先切换镜像：
 
 ```bash
 conda config --set show_channel_urls yes
@@ -154,14 +178,14 @@ conda clean -i
 conda env create -f environment.yml
 ```
 
-如果仍然超时，可以把 Conda 超时时间调大：
+如果仍然超时，可以调大 Conda 超时时间：
 
 ```bash
 conda config --set remote_connect_timeout_secs 30
 conda config --set remote_read_timeout_secs 60
 ```
 
-### 1.6 配置环境变量
+### 2.7 配置 .env
 
 复制模板：
 
@@ -169,57 +193,96 @@ conda config --set remote_read_timeout_secs 60
 cp .env.example .env
 ```
 
-确认 `.env` 至少包含：
+本机最小可运行配置：
 
 ```env
 DATABASE_URL=postgresql+psycopg://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe
 OPENSEARCH_URL=http://127.0.0.1:9200
 API_PORT=8000
 ADMIN_TOKEN=dev-token
-SAMPLE_DATA_PATH=data/xiachufang/recipes.jsonl
+SAMPLE_DATA_PATH=data/xiachufang/recipes_subset.jsonl
 CORS_ALLOWED_ORIGINS=
+
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=60
+RERANK_ENABLED=false
+RERANK_TOP_K=20
+RERANK_WEIGHT=0.35
+LLM_ENHANCE_ENABLED=false
 ```
 
-### 1.7 启动后端
+如果要开启 v3 的 DeepSeek 能力，在 `.env` 中填写你的 Key，并打开开关：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+RERANK_ENABLED=true
+LLM_ENHANCE_ENABLED=true
+```
+
+注意：
+
+- 不要把真实 `DEEPSEEK_API_KEY` 提交到 Git。
+- 如果模型接口返回模型名不可用，可把 `DEEPSEEK_MODEL` 改成你 DeepSeek 账号当前可用的模型名。
+- 关闭 `RERANK_ENABLED` 时，搜索接口仍按规则排序。
+- 关闭 `LLM_ENHANCE_ENABLED` 时，智能生成接口会返回 `503`。
+
+### 2.8 启动后端
 
 ```bash
-cd /mnt/d/Fridge2Recipe
 conda activate fridge2recipe
 export PYTHONPATH=$PWD/backend
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-另开一个终端测试：
+另开一个 WSL 终端或 Windows PowerShell 测试：
 
 ```bash
 curl http://localhost:8000/health
 ```
+
 预期返回：
 
 ```json
 {"status":"ok"}
+```
 
+浏览器也可以访问：
 
-清空旧数据：
+```text
+http://localhost:8000/docs
+```
+
+## 3. 导入数据和基础接口测试
+
+以下命令在 WSL 和远程 Linux 服务器中都适用。
+
+如果你的 WSL 设置了代理，访问本机后端时可以先取消代理环境变量：
+
+```bash
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+curl http://localhost:8000/health
+```
+
+### 3.1 清空旧数据
+
+如果之前导入过测试数据或旧真实数据，建议先清空：
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/admin/reset-data \
   -H "X-Admin-Token: dev-token"
 ```
 
+### 3.2 导入真实子集数据
 
+`.env` 中默认导入：
+
+```text
+data/xiachufang/recipes_subset.jsonl
 ```
 
-## 2. 导入和测试接口
-
-以下命令在 WSL 或远程服务器中都适用。
-
-导入测试数据：
-
-
-如果你 WSL 里设置了代理，建议这样绕过代理访问本机后端：
-```bash
-env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-```
+执行：
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/admin/import \
@@ -228,259 +291,256 @@ curl -X POST http://localhost:8000/api/v1/admin/import \
   -d "{}"
 ```
 
-预期会看到类似：
+真实子集导入成功时，响应通常类似：
 
 ```json
-{"rows":12,"imported":12,"skipped":0,"source_records":12,"recipe_ingredients":86,"recipe_steps":60}
+{"rows":2500,"imported":2500,"skipped":0,"source_records":2500,"recipe_ingredients":20135,"recipe_steps":17784,"skipped_ingredients":1}
 ```
 
-如果之前已经导入过，相同 `id` 会被跳过，`skipped` 会增加。
+如果重复导入相同数据，`imported` 会变成 `0`，`skipped` 会增加，这是正常现象。
 
-测试搜索：
+### 3.3 测试搜索
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/search/by-ingredients \
   -H "Content-Type: application/json" \
   -d '{"items":["西红柿","鸡蛋"],"excluded_items":[],"filters":{},"page":1,"page_size":3}'
 ```
-bucket 规则是按“缺少多少食材”分组：
-  缺 0 个 -> 马上能做
-  缺 1 个 -> 再买 1 样
-  缺 2-3 个 -> 还差几样
-  缺 4 个以上 -> 灵感参考
-  （调整了对于基本调味料缺失的考虑）
 
+返回中重点看：
 
-测试排除食材：
+- `parsed.ingredients`：后端识别出的食材。
+- `items[].matched`：命中的已有食材。
+- `items[].missing`：缺少的非基础调味品食材。
+- `items[].bucket`：结果分组。
+- `items[].recipe_tags`：后端推断标签。
+- `items[].rerank_score`：DeepSeek 精排分，未开启或调用失败时为 `null`。
+- `facets.rerank`：rerank 诊断状态，包含是否开启、是否配置 key、是否尝试调用、失败原因。
+
+bucket 规则：
+
+```text
+缺 0 个 -> 马上能做
+缺 1 个 -> 再买 1 样
+缺 2-3 个 -> 还差几样
+缺 4 个以上 -> 灵感参考
+```
+
+默认 `count_seasonings_as_ingredients=false`，所以盐、糖、油、生抽、醋、胡椒、淀粉等基础调味品不会计入 `missing`。
+
+### 3.4 测试偏好标签
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/search/by-ingredients \
   -H "Content-Type: application/json" \
-  -d '{"items":["豆腐","蒜"],"excluded_items":["豆瓣酱"],"filters":{},"page":1,"page_size":5}'
+  -d '{"items":["西红柿","鸡蛋"],"excluded_items":["香菜"],"filters":{"spice":"not_spicy","complexity":"simple","count_seasonings_as_ingredients":false,"diet":"vegetarian","for_children":true,"serving_size":"small","seasoning_amount":"few","methods":["炒"]},"page":1,"page_size":3}'
 ```
 
-查看详情：
+返回中重点看：
+
+- `preference_matches`
+- `preference_mismatches`
+- `preference_score`
+- `recipe_tags`
+
+说明：食材匹配权重最高，所以某个菜谱即使没有满足“简单”等次级偏好，也可能因为食材匹配很好而排在前面。
+
+### 3.5 测试详情
+
+不要固定使用 `/recipes/1`。正式前端应使用搜索结果里的 `items[].recipe_id`。
+
+手动测试可以先请求：
 
 ```bash
 curl http://localhost:8000/api/v1/recipes/1
 ```
-可以规避请求方式不对造成的错误显示：
-```bash
-curl http://localhost:8000/health
-```
-浏览器直接打开http://localhost:8000/health
 
-## 3. 远程 Linux 服务器运行
+返回中重点看：
 
-远程服务器步骤和 WSL 基本一致，只是项目路径、端口开放和后台运行方式不同。
+- `recipe_tags`
+- `ingredients[].required`
+- `steps`
 
-### 3.1 登录服务器
+## 4. v3 DeepSeek 功能测试
 
-```bash
-ssh user@your-server-ip
-```
+### 4.1 测试 rerank 精排
 
-### 3.2 安装依赖
+确认 `.env` 中：
 
-```bash
-sudo apt update
-sudo apt install -y git curl postgresql postgresql-contrib
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+RERANK_ENABLED=true
 ```
 
-你已经安装了 Anaconda 时，不需要再安装 Miniconda。确认服务器上能使用 Conda：
+重启后端后，再执行搜索：
 
 ```bash
-conda --version
-```
-
-如果服务器提示 `conda: command not found`，但确认已安装 Anaconda，可以执行：
-
-```bash
-conda init bash
-source ~/.bashrc
-conda --version
-```
-
-### 3.3 获取项目
-
-方式一：服务器直接拉取仓库：
-
-```bash
-git clone <your-repo-url> Fridge2Recipe
-cd Fridge2Recipe
-```
-
-其中 `<your-repo-url>` 替换成你的 GitHub / GitLab / Gitee 仓库地址，例如：
-
-```bash
-git clone https://github.com/你的用户名/Fridge2Recipe.git Fridge2Recipe
-```
-
-方式二：从 Windows 上传：
-
-```powershell
-scp -r D:\Fridge2Recipe user@your-server-ip:~/Fridge2Recipe
-```
-
-然后在服务器上：
-
-```bash
-cd ~/Fridge2Recipe
-```
-
-### 3.4 配置 PostgreSQL、Conda 和 .env
-
-启动 PostgreSQL：
-
-```bash
-sudo systemctl enable postgresql
-sudo systemctl start postgresql
-sudo systemctl status postgresql
-```
-
-创建用户和数据库：
-
-```bash
-sudo -u postgres psql
-```
-
-```sql
-CREATE USER fridge WITH PASSWORD 'fridge_dev_password';
-CREATE DATABASE fridge2recipe OWNER fridge;
-\q
-```
-
-创建 Conda 环境：
-
-```bash
-conda env create -f environment.yml
-conda activate fridge2recipe
-```
-
-如果远程服务器访问 `repo.anaconda.com` 超时，可以参考 WSL 部分的 Conda 镜像配置，先切换到清华镜像再创建环境。
-
-复制并编辑配置：
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-建议把 `ADMIN_TOKEN` 和数据库密码改成强密码。
-
-### 3.5 前台启动测试
-
-```bash
-conda activate fridge2recipe
-export PYTHONPATH=$PWD/backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-检查：
-
-```bash
-curl http://localhost:8000/health
-```
-
-### 3.6 开放服务器端口
-
-只需要开放 API 端口，例如 `8000`：
-
-```bash
-sudo ufw allow 8000/tcp
-sudo ufw status
-```
-
-云服务器还需要在安全组中放行 TCP `8000`。
-
-不要把 PostgreSQL `5432` 暴露到公网。
-
-## 4. 使用 systemd 后台运行远程服务器后端
-
-WSL 本机调试通常不需要 systemd。远程服务器正式演示建议使用 systemd。
-
-创建服务文件：
-
-```bash
-sudo nano /etc/systemd/system/fridge2recipe-api.service
-```
-
-写入以下内容，并把 `YOUR_USER` 和路径替换成你的实际用户和项目路径：
-
-```ini
-[Unit]
-Description=Fridge2Recipe FastAPI backend
-After=network.target postgresql.service
-
-[Service]
-User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/Fridge2Recipe
-Environment=PYTHONPATH=/home/YOUR_USER/Fridge2Recipe/backend
-ExecStart=/home/YOUR_USER/anaconda3/envs/fridge2recipe/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启动服务：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable fridge2recipe-api
-sudo systemctl start fridge2recipe-api
-sudo systemctl status fridge2recipe-api
-```
-
-查看日志：
-
-```bash
-journalctl -u fridge2recipe-api -f
-```
-
-如果你的 Anaconda 安装路径不是 `/home/YOUR_USER/anaconda3`，先用下面命令确认 Python 路径：
-
-```bash
-conda activate fridge2recipe
-which python
-```
-
-然后把 `ExecStart` 中的 Python 路径替换为 `which python` 输出的路径。
-
-## 5. 更新代码或数据
-
-如果是 git clone：
-
-```bash
-cd ~/Fridge2Recipe
-git pull
-conda activate fridge2recipe
-conda env update -f environment.yml --prune
-```
-
-远程服务器使用 systemd 时重启：
-
-```bash
-sudo systemctl restart fridge2recipe-api
-```
-
-WSL 本机调试时，停止并重新运行 `uvicorn` 即可。
-
-如果只是更新了 `data/xiachufang/recipes.jsonl`，可以重新导入：
-
-```bash
-curl -X POST http://localhost:8000/api/v1/admin/import \
+curl -X POST http://localhost:8000/api/v1/search/by-ingredients \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: dev-token" \
-  -d "{}"
+  -d '{"items":["西红柿","鸡蛋"],"excluded_items":[],"filters":{"spice":"not_spicy","for_children":true},"page":1,"page_size":3}'
 ```
 
-注意：同一个菜谱 `id` 已导入后会跳过。如果希望重新导入全部测试数据，需要手动清空相关数据库表或重建数据库。
+如果 DeepSeek 调用成功，搜索结果中的部分条目会出现：
 
-## 6. 可选：安装并使用 OpenSearch
+```json
+{
+  "rerank_score": 0.92,
+  "rerank_reason": "食材完全覆盖，口味清淡，适合儿童友好做法"
+}
+```
 
-当前 MVP 不依赖 OpenSearch 完成搜索。如果你已经安装并启动 OpenSearch，可以在 `.env` 中配置：
+如果 `rerank_score` 仍为 `null`，常见原因：
+
+- `RERANK_ENABLED` 没有设为 `true`。
+- `DEEPSEEK_API_KEY` 为空或错误。
+- 当前机器无法访问 `https://api.deepseek.com`。
+- `DEEPSEEK_MODEL` 当前不可用。
+- `DEEPSEEK_TIMEOUT_SECONDS` 太小，或者 `RERANK_TOP_K` 太大导致 rerank 请求变慢。
+- 模型没有返回可解析 JSON。后端会自动关闭 JSON mode 重试一次，如果仍失败，会把返回片段写入 `facets.rerank.error`。
+
+优先查看响应中的 `facets.rerank.error`，它会直接给出本次未生效的原因。
+如果错误是 `read operation timed out`，建议先设置：
+
+```env
+DEEPSEEK_TIMEOUT_SECONDS=60
+RERANK_TOP_K=5
+```
+
+注意：rerank 失败不会导致搜索接口失败，后端会自动回退到规则排序，并在服务日志中打印 `DeepSeek rerank skipped`。
+
+### 4.2 测试智能改良版菜谱生成
+
+确认 `.env` 中：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+LLM_ENHANCE_ENABLED=true
+```
+
+重启后端后执行：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/recipes/1/enhance \
+  -H "Content-Type: application/json" \
+  -d '{"user_items":["西红柿","鸡蛋"],"excluded_items":["香菜"],"preferences":{"spice":"not_spicy","complexity":"simple","for_children":true,"methods":["炒"]}}'
+```
+
+成功时返回：
+
+```json
+{
+  "recipe_id": 1,
+  "source_recipe_id": "r0000067",
+  "original_title": "超美味的西红柿蛋汤",
+  "generated_title": "儿童友好版西红柿鸡蛋汤",
+  "summary": "根据你的食材和偏好生成的智能改良做法。",
+  "bucket": "马上能做",
+  "bucket_reason": "生成菜谱所需主要食材已被已有食材覆盖，基础调味品和清水不计入缺失。",
+  "matched": ["番茄", "鸡蛋"],
+  "missing": [],
+  "ingredients": ["西红柿 2 个", "鸡蛋 1 个", "盐 少量"],
+  "steps": ["西红柿切小块，鸡蛋打散备用。"],
+  "tips": ["给小孩吃时盐可以少一点。"],
+  "model": "deepseek-v4-flash",
+  "disclaimer": "该结果由大模型根据原始菜谱和用户偏好生成，适合作为改良建议，请以实际烹饪情况调整。"
+}
+```
+
+`bucket` 用于提示智能改良版菜谱的可用性，规则和搜索结果一致：缺 0 个主要食材是 `马上能做`，缺 1 个是 `再买 1 样`，缺 2 到 3 个是 `还差几样`，缺 4 个以上是 `灵感参考`。
+
+如果未开启或未配置 key，会返回 `503`，这是正常保护行为。
+
+### 4.3 全流程测试：排序并生成 5 个菜谱
+
+这个测试会一次完成：
+
+```text
+输入食材
+-> 调用 /api/v1/search/by-ingredients 获取排序后的前 5 个菜谱
+-> 对每个 recipe_id 调用 /api/v1/recipes/{recipe_id}/enhance
+-> 输出 5 个带搜索排序信息和智能生成内容的菜谱
+```
+
+确认 `.env` 已开启：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+RERANK_ENABLED=true
+LLM_ENHANCE_ENABLED=true
+```
+
+重启后端后，在项目根目录执行：
+
+```bash
+python scripts/full_flow_generate_top5.py \
+  --items "西红柿,鸡蛋,黄瓜" \
+  --excluded "香菜" \
+  --spice not_spicy \
+  --complexity simple \
+  --diet vegetarian \
+  --for-children \
+  --serving-size small \
+  --seasoning-amount few \
+  --methods "炒,拌" \
+  --limit 5 \
+  --timeout 180 \
+  --retries 1
+```
+
+输出结构：
+
+```json
+{
+  "input": {
+    "items": ["西红柿", "鸡蛋", "黄瓜"],
+    "excluded_items": ["香菜"],
+    "filters": {
+      "spice": "not_spicy",
+      "complexity": "simple"
+    },
+    "limit": 5
+  },
+  "rerank_status": {
+    "enabled": true,
+    "configured": true,
+    "attempted": true,
+    "applied": true,
+    "error": null
+  },
+  "search_total": 2400,
+  "items": [
+    {
+      "rank": 1,
+      "search_result": {
+        "recipe_id": 1,
+        "title": "原始搜索结果标题",
+        "bucket": "马上能做",
+        "score": 1.23
+      },
+      "generated_recipe": {
+        "generated_title": "智能生成标题",
+        "bucket": "马上能做",
+        "bucket_reason": "生成菜谱所需主要食材已被已有食材覆盖，基础调味品和清水不计入缺失。",
+        "ingredients": ["食材"],
+        "steps": ["步骤"]
+      }
+    }
+  ]
+}
+```
+
+如果只想快速看前 5 个，不指定偏好也可以：
+
+```bash
+python scripts/full_flow_generate_top5.py --items "西红柿,鸡蛋" --limit 5 --timeout 180
+```
+
+脚本会逐个生成菜谱。某一个菜谱生成超时或失败时，不会中断整个流程；该条结果的 `generated_recipe` 会是 `null`，并在 `generation_error` 中记录失败原因。
+
+
+## 5. 可选：安装并使用 OpenSearch
+
+当前 v3 搜索接口不依赖 OpenSearch。如果你已经安装并启动 OpenSearch，可以在 `.env` 中配置：
 
 ```env
 OPENSEARCH_URL=http://127.0.0.1:9200
@@ -493,60 +553,27 @@ curl -X POST http://localhost:8000/api/v1/admin/reindex \
   -H "X-Admin-Token: dev-token"
 ```
 
-## 7. 常见问题
+## 6. 常见问题
 
-WSL 中 PostgreSQL 没启动：
+### 6.1 WSL 中 PostgreSQL 没启动
 
 ```bash
 sudo service postgresql start
 sudo service postgresql status
 ```
 
-WSL 中 `apt install` 下载失败：
+### 6.2 `apt install` 下载失败
 
-如果出现 `Connection timed out`、`Connection failed`，或者请求地址解析到类似 `198.18.x.x`，通常是 WSL 访问 Ubuntu 官方源不稳定，或本机代理/VPN 的 fake-ip 影响了 apt。可以先把 Ubuntu 源换成国内镜像，再刷新索引。
+如果出现 `Connection timed out`、`Temporary failure resolving`，可以先把 Ubuntu 源换成国内镜像。
 
-先确认 Ubuntu 版本代号：
-
-```bash
-. /etc/os-release
-echo $VERSION_CODENAME
-```
-
-Ubuntu 24.04 通常输出 `noble`。如果是 Ubuntu 24.04，可执行：
-
-```bash
-sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
-sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null <<'EOF'
-Types: deb
-URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
-Suites: noble noble-updates noble-backports
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
-Suites: noble-security
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-EOF
-sudo apt clean
-sudo apt update
-sudo apt install -y git curl postgresql postgresql-contrib
-```
-
-如果你的 Ubuntu 版本不是 `noble`，不要直接复制上面的源配置；需要把 `noble` 替换成你的版本代号，例如 `jammy`。
-
-WSL 中提示 `Unable to locate package postgresql`：
-
-这个错误说明 apt 当前包索引里没有 PostgreSQL 包，通常是源配置缺失、版本代号写错，或没有成功执行 `sudo apt update`。先检查版本代号：
+确认 Ubuntu 版本代号：
 
 ```bash
 . /etc/os-release
 echo $VERSION_CODENAME
 ```
 
-然后用版本代号自动重写 Ubuntu 源。下面命令适用于 Ubuntu 24.04 的 deb822 源格式，也可用于较新的 WSL Ubuntu：
+Ubuntu 24.04 通常输出 `noble`。可执行：
 
 ```bash
 CODENAME=$(. /etc/os-release && echo $VERSION_CODENAME)
@@ -566,63 +593,98 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
 sudo apt clean
 sudo apt update
-apt-cache policy postgresql postgresql-contrib
+```
+
+然后重新安装：
+
+```bash
 sudo apt install -y git curl postgresql postgresql-contrib
 ```
 
-如果 `apt-cache policy postgresql` 仍然没有候选版本，可以直接安装版本包。Ubuntu 24.04 通常是 PostgreSQL 16：
+### 6.3 `Unable to locate package postgresql`
 
-```bash
-sudo apt install -y postgresql-16 postgresql-contrib
-```
-
-如果仍然找不到 `postgresql-16`，说明 apt 源仍未正确生效。请执行：
+先检查源配置：
 
 ```bash
 grep -R "URIs\\|Suites\\|Components\\|^deb " /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null
+apt-cache policy postgresql postgresql-contrib
 ```
 
-确认输出中有你的 Ubuntu 版本代号，例如 `noble`，并且 `Components` 包含 `main` 和 `universe`。
+如果输出里没有当前 Ubuntu 版本代号，按上一节重写 Ubuntu 源。
 
-如果输出里还有旧的 Docker 源，例如 `/etc/apt/sources.list.d/docker.list`，而当前项目不再使用 Docker，可以先移除它，避免它干扰 `apt update`：
+如果还有旧 Docker 源，而当前项目不再使用 Docker，可以先禁用：
 
 ```bash
 sudo mkdir -p /etc/apt/disabled-sources
 sudo mv /etc/apt/sources.list.d/docker.list /etc/apt/disabled-sources/docker.list.bak 2>/dev/null || true
-```
-
-然后强制清理并刷新 apt 索引：
-
-```bash
 sudo rm -rf /var/lib/apt/lists/*
 sudo apt clean
 sudo apt update
 ```
 
-刷新后检查 PostgreSQL 包是否进入索引：
+### 6.4 Windows 访问不到 WSL 后端
+
+检查：
+
+- uvicorn 是否使用 `--host 0.0.0.0`
+- WSL 中是否能访问 `curl http://localhost:8000/health`
+- Windows PowerShell 中是否能访问 `curl http://localhost:8000/health`
+
+### 6.5 数据库连接失败
+
+检查：
 
 ```bash
-apt-cache search '^postgresql$'
-apt-cache search '^postgresql-[0-9]+$'
-apt-cache policy postgresql postgresql-16 postgresql-contrib
+sudo service postgresql status
+psql "postgresql://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe" -c "select now();"
 ```
 
-如果 `apt-cache search '^postgresql$'` 仍然没有输出，说明 `sudo apt update` 仍未成功从 Ubuntu 源下载包索引。此时请先看 `sudo apt update` 的完整输出，重点检查是否有 `Err`、`NO_PUBKEY`、`Release file`、`Temporary failure resolving` 或 `Connection timed out`。
+同时确认 `.env` 中 `DATABASE_URL` 和 PostgreSQL 用户、密码、数据库名一致。
 
-Windows 访问不到 WSL 后端：
+### 6.6 导入数据后搜索为空
 
-- 确认 uvicorn 使用 `--host 0.0.0.0`
-- 在 WSL 中先测试 `curl http://localhost:8000/health`
-- 再在 Windows PowerShell 中测试 `curl http://localhost:8000/health`
+检查：
 
-数据库连接失败：
+- 是否已经调用 `/api/v1/admin/import`
+- 导入响应中 `imported` 是否大于 0
+- 是否重复导入导致 `skipped` 增加
+- `.env` 中 `SAMPLE_DATA_PATH` 是否指向正确 JSONL 文件
 
-- 检查 `.env` 中 `DATABASE_URL`
-- 检查 PostgreSQL 是否启动
-- 用 `psql "postgresql://fridge:fridge_dev_password@127.0.0.1:5432/fridge2recipe" -c "select now();"` 单独测试
+### 6.7 rerank 没有效果
 
-导入数据后搜索为空：
+检查：
 
-- 确认已经调用 `/api/v1/admin/import`
-- 确认导入响应中 `imported` 大于 0
-- 如果之前导入过旧数据，相同 `id` 会被跳过
+```env
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+RERANK_ENABLED=true
+```
+
+然后重启后端。搜索接口如果调用 DeepSeek 失败，会自动回退规则排序，所以接口仍会正常返回，只是 `rerank_score` 可能为 `null`。
+
+### 6.8 智能生成接口返回 503
+
+常见原因：
+
+- `LLM_ENHANCE_ENABLED` 没有设为 `true`
+- `DEEPSEEK_API_KEY` 为空或错误
+- 服务器无法访问 `https://api.deepseek.com`
+- `DEEPSEEK_MODEL` 当前不可用
+- 请求超时，可把 `DEEPSEEK_TIMEOUT_SECONDS` 调到 `60` 或 `90`
+
+修改 `.env` 后记得重启后端。
+
+### 6.9 前端跨机器访问后端
+
+如果前端不在后端同一台机器上，前端 API 地址不能写 `127.0.0.1`，应改为：
+
+```text
+http://后端机器IP:8000
+```
+
+同时在后端 `.env` 中配置前端来源：
+
+```env
+CORS_ALLOWED_ORIGINS=http://前端机器IP:5173
+```
+
+然后重启后端。

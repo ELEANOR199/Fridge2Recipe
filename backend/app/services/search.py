@@ -4,11 +4,13 @@ from time import perf_counter
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.config import get_settings
 from app.models.tables import Recipe, SearchEvent
 from app.schemas.api import ParseResponse, SearchFilters, SearchItem, SearchRequest, SearchResponse
 from app.services.parser import parse_ingredients
 from app.services.normalizer import is_basic_seasoning
 from app.services.preferences import extract_recipe_features, recipe_tags, score_preferences
+from app.services.reranker import rerank_search_items
 
 
 def bucket_for_missing(missing_count: int) -> str:
@@ -89,6 +91,7 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
     5. 保存轻量搜索事件，供后续评测使用。
     """
     started = perf_counter()
+    settings = get_settings()
 
     # 普通食材和排除食材走同一套归一路径，
     # 这样“西红柿”和“番茄”在任何位置都会变成同一个规范食材。
@@ -96,7 +99,11 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
     parsed_excluded = parse_ingredients(db, request.excluded_items)
 
     user_names = {item.canonical for item in parsed.ingredients}
-    excluded_names = set(parsed.excluded_ingredients) | {item.canonical for item in parsed_excluded.ingredients}
+    excluded_names = (
+        set(parsed.excluded_ingredients)
+        | set(parsed_excluded.excluded_ingredients)
+        | {item.canonical for item in parsed_excluded.ingredients}
+    )
     all_excluded = sorted(excluded_names)
     parsed = ParseResponse(
         ingredients=parsed.ingredients,
@@ -172,6 +179,7 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
         )
 
     scored.sort(key=lambda item: item.score, reverse=True)
+    scored, rerank_status = rerank_search_items(scored, request, settings)
     total = len(scored)
     start = (request.page - 1) * request.page_size
     end = start + request.page_size
@@ -192,5 +200,8 @@ def search_by_ingredients(db: Session, request: SearchRequest) -> SearchResponse
         parsed=parsed,
         total=total,
         items=scored[start:end],
-        facets={"bucket": [{"name": name, "count": count} for name, count in bucket_counts.items()]},
+        facets={
+            "bucket": [{"name": name, "count": count} for name, count in bucket_counts.items()],
+            "rerank": rerank_status,
+        },
     )
